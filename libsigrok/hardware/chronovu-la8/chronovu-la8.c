@@ -120,7 +120,7 @@ static uint64_t supported_samplerates[255 + 1] = { 0 };
  * Min: 1 sample per 0.01us -> sample time is 0.084s, samplerate 100MHz
  * Max: 1 sample per 2.55us -> sample time is 21.391s, samplerate 392.15kHz
  */
-static struct sr_samplerates samplerates = {
+static const struct sr_samplerates samplerates = {
 	.low  = 0,
 	.high = 0,
 	.step = 0,
@@ -128,7 +128,7 @@ static struct sr_samplerates samplerates = {
 };
 
 /* Note: Continuous sampling is not supported by the hardware. */
-static int hwcaps[] = {
+static const int hwcaps[] = {
 	SR_HWCAP_LOGIC_ANALYZER,
 	SR_HWCAP_SAMPLERATE,
 	SR_HWCAP_LIMIT_MSEC, /* TODO: Not yet implemented. */
@@ -400,10 +400,10 @@ static int la8_reset(struct context *ctx)
 	return SR_OK;
 }
 
-static int configure_probes(struct context *ctx, GSList *probes)
+static int configure_probes(struct context *ctx, const GSList *probes)
 {
-	struct sr_probe *probe;
-	GSList *l;
+	const struct sr_probe *probe;
+	const GSList *l;
 	uint8_t probe_bit;
 	char *tc;
 
@@ -681,11 +681,11 @@ static int hw_cleanup(void)
 	return ret;
 }
 
-static void *hw_dev_info_get(int dev_index, int dev_info_id)
+static const void *hw_dev_info_get(int dev_index, int dev_info_id)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
-	void *info;
+	const void *info;
 
 	if (!(sdi = sr_dev_inst_get(dev_insts, dev_index))) {
 		sr_err("la8: %s: sdi was NULL", __func__);
@@ -753,14 +753,14 @@ static int hw_dev_status_get(int dev_index)
 	return sdi->status;
 }
 
-static int *hw_hwcap_get_all(void)
+static const int *hw_hwcap_get_all(void)
 {
 	sr_spew("la8: Returning list of device capabilities.");
 
 	return hwcaps;
 }
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value)
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
@@ -779,32 +779,32 @@ static int hw_dev_config_set(int dev_index, int hwcap, void *value)
 
 	switch (hwcap) {
 	case SR_HWCAP_SAMPLERATE:
-		if (set_samplerate(sdi, *(uint64_t *)value) == SR_ERR) {
+		if (set_samplerate(sdi, *(const uint64_t *)value) == SR_ERR) {
 			sr_err("la8: %s: setting samplerate failed.", __func__);
 			return SR_ERR;
 		}
 		sr_dbg("la8: SAMPLERATE = %" PRIu64, ctx->cur_samplerate);
 		break;
 	case SR_HWCAP_PROBECONFIG:
-		if (configure_probes(ctx, (GSList *)value) != SR_OK) {
+		if (configure_probes(ctx, (const GSList *)value) != SR_OK) {
 			sr_err("la8: %s: probe config failed.", __func__);
 			return SR_ERR;
 		}
 		break;
 	case SR_HWCAP_LIMIT_MSEC:
-		if (*(uint64_t *)value == 0) {
+		if (*(const uint64_t *)value == 0) {
 			sr_err("la8: %s: LIMIT_MSEC can't be 0.", __func__);
 			return SR_ERR;
 		}
-		ctx->limit_msec = *(uint64_t *)value;
+		ctx->limit_msec = *(const uint64_t *)value;
 		sr_dbg("la8: LIMIT_MSEC = %" PRIu64, ctx->limit_msec);
 		break;
 	case SR_HWCAP_LIMIT_SAMPLES:
-		if (*(uint64_t *)value < MIN_NUM_SAMPLES) {
+		if (*(const uint64_t *)value < MIN_NUM_SAMPLES) {
 			sr_err("la8: %s: LIMIT_SAMPLES too small.", __func__);
 			return SR_ERR;
 		}
-		ctx->limit_samples = *(uint64_t *)value;
+		ctx->limit_samples = *(const uint64_t *)value;
 		sr_dbg("la8: LIMIT_SAMPLES = %" PRIu64, ctx->limit_samples);
 		break;
 	default:
@@ -1016,6 +1016,7 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	struct context *ctx;
 	struct sr_datafeed_packet packet;
 	struct sr_datafeed_header header;
+	struct sr_datafeed_meta_logic meta;
 	uint8_t buf[4];
 	int bytes_written;
 
@@ -1069,8 +1070,13 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	packet.payload = &header;
 	header.feed_version = 1;
 	gettimeofday(&header.starttime, NULL);
-	header.samplerate = ctx->cur_samplerate;
-	header.num_logic_probes = NUM_PROBES;
+	sr_session_send(ctx->session_dev_id, &packet);
+
+	/* Send metadata about the SR_DF_LOGIC packets to come. */
+	packet.type = SR_DF_META_LOGIC;
+	packet.payload = &meta;
+	meta.samplerate = ctx->cur_samplerate;
+	meta.num_probes = NUM_PROBES;
 	sr_session_send(ctx->session_dev_id, &packet);
 
 	/* Time when we should be done (for detecting trigger timeouts). */

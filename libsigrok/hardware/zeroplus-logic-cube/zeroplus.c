@@ -30,9 +30,10 @@
 #include "analyzer.h"
 
 #define USB_VENDOR			0x0c12
-#define USB_VENDOR_NAME			"Zeroplus"
-#define USB_MODEL_NAME			"Logic Cube"
-#define USB_MODEL_VERSION		""
+
+#define VENDOR_NAME			"ZEROPLUS"
+#define MODEL_NAME			"Logic Cube LAP-C"
+#define MODEL_VERSION			NULL
 
 #define NUM_PROBES			16
 #define USB_INTERFACE			0
@@ -64,7 +65,7 @@ static model_t zeroplus_models[] = {
 	{0x7016, "LAP-C(162000)", 16, 2048, 200},
 };
 
-static int hwcaps[] = {
+static const int hwcaps[] = {
 	SR_HWCAP_LOGIC_ANALYZER,
 	SR_HWCAP_SAMPLERATE,
 	SR_HWCAP_PROBECONFIG,
@@ -113,7 +114,7 @@ static libusb_context *usb_context = NULL;
  * TODO: We shouldn't support 150MHz and 200MHz on devices that don't go up
  * that high.
  */
-static uint64_t supported_samplerates[] = {
+static const uint64_t supported_samplerates[] = {
 	SR_HZ(100),
 	SR_HZ(500),
 	SR_KHZ(1),
@@ -135,7 +136,7 @@ static uint64_t supported_samplerates[] = {
 	0,
 };
 
-static struct sr_samplerates samplerates = {
+static const struct sr_samplerates samplerates = {
 	0,
 	0,
 	0,
@@ -156,7 +157,7 @@ struct context {
 	struct sr_usb_dev_inst *usb;
 };
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value);
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value);
 
 static unsigned int get_memory_size(int type)
 {
@@ -201,7 +202,7 @@ static int opendev4(struct sr_dev_inst **sdi, libusb_device *dev,
 			if (!(des->idProduct == zeroplus_models[i].pid))
 				continue;
 
-			sr_info("zp: Found ZeroPlus device 0x%04x (%s)",
+			sr_info("zp: Found ZEROPLUS device 0x%04x (%s)",
 				des->idProduct, zeroplus_models[i].model_name);
 			ctx->num_channels = zeroplus_models[i].channels;
 			ctx->memory_size = zeroplus_models[i].sample_depth * 1024;
@@ -209,7 +210,7 @@ static int opendev4(struct sr_dev_inst **sdi, libusb_device *dev,
 		}
 
 		if (ctx->num_channels == 0) {
-			sr_err("zp: Unknown ZeroPlus device 0x%04x",
+			sr_err("zp: Unknown ZEROPLUS device 0x%04x",
 			       des->idProduct);
 			return -2;
 		}
@@ -281,11 +282,11 @@ static void close_dev(struct sr_dev_inst *sdi)
 	sdi->status = SR_ST_INACTIVE;
 }
 
-static int configure_probes(struct sr_dev_inst *sdi, GSList *probes)
+static int configure_probes(struct sr_dev_inst *sdi, const GSList *probes)
 {
 	struct context *ctx;
-	struct sr_probe *probe;
-	GSList *l;
+	const struct sr_probe *probe;
+	const GSList *l;
 	int probe_bit, stage, i;
 	char *tc;
 
@@ -359,7 +360,7 @@ static int hw_init(const char *devinfo)
 		return 0;
 	}
 
-	/* Find all ZeroPlus analyzers and add them to device list. */
+	/* Find all ZEROPLUS analyzers and add them to device list. */
 	devcnt = 0;
 	libusb_get_device_list(usb_context, &devlist); /* TODO: Errors. */
 
@@ -372,14 +373,14 @@ static int hw_init(const char *devinfo)
 
 		if (des.idVendor == USB_VENDOR) {
 			/*
-			 * Definitely a Zeroplus.
+			 * Definitely a ZEROPLUS.
 			 * TODO: Any way to detect specific model/version in
-			 * the zeroplus range?
+			 * the ZEROPLUS range?
 			 */
 			/* Register the device with libsigrok. */
 			if (!(sdi = sr_dev_inst_new(devcnt,
-					SR_ST_INACTIVE, USB_VENDOR_NAME,
-					USB_MODEL_NAME, USB_MODEL_VERSION))) {
+					SR_ST_INACTIVE, VENDOR_NAME,
+					MODEL_NAME, MODEL_VERSION))) {
 				sr_err("zp: %s: sr_dev_inst_new failed",
 				       __func__);
 				return 0;
@@ -498,11 +499,11 @@ static int hw_cleanup(void)
 	return SR_OK;
 }
 
-static void *hw_dev_info_get(int dev_index, int dev_info_id)
+static const void *hw_dev_info_get(int dev_index, int dev_info_id)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
-	void *info;
+	const void *info;
 
 	if (!(sdi = sr_dev_inst_get(dev_insts, dev_index))) {
 		sr_err("zp: %s: sdi was NULL", __func__);
@@ -565,7 +566,7 @@ static int hw_dev_status_get(int dev_index)
 		return SR_ST_NOT_FOUND;
 }
 
-static int *hw_hwcap_get_all(void)
+static const int *hw_hwcap_get_all(void)
 {
 	return hwcaps;
 }
@@ -598,7 +599,7 @@ static int set_samplerate(struct sr_dev_inst *sdi, uint64_t samplerate)
 	return SR_OK;
 }
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value)
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
@@ -615,11 +616,11 @@ static int hw_dev_config_set(int dev_index, int hwcap, void *value)
 
 	switch (hwcap) {
 	case SR_HWCAP_SAMPLERATE:
-		return set_samplerate(sdi, *(uint64_t *)value);
+		return set_samplerate(sdi, *(const uint64_t *)value);
 	case SR_HWCAP_PROBECONFIG:
-		return configure_probes(sdi, (GSList *)value);
+		return configure_probes(sdi, (const GSList *)value);
 	case SR_HWCAP_LIMIT_SAMPLES:
-		ctx->limit_samples = *(uint64_t *)value;
+		ctx->limit_samples = *(const uint64_t *)value;
 		return SR_OK;
 	default:
 		return SR_ERR;
@@ -632,6 +633,7 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	struct sr_datafeed_packet packet;
 	struct sr_datafeed_logic logic;
 	struct sr_datafeed_header header;
+	struct sr_datafeed_meta_logic meta;
 	uint64_t samples_read;
 	int res;
 	unsigned int packet_num;
@@ -666,8 +668,13 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	packet.payload = &header;
 	header.feed_version = 1;
 	gettimeofday(&header.starttime, NULL);
-	header.samplerate = ctx->cur_samplerate;
-	header.num_logic_probes = ctx->num_channels;
+	sr_session_send(cb_data, &packet);
+
+	/* Send metadata about the SR_DF_LOGIC packets to come. */
+	packet.type = SR_DF_META_LOGIC;
+	packet.payload = &meta;
+	meta.samplerate = ctx->cur_samplerate;
+	meta.num_probes = ctx->num_channels;
 	sr_session_send(cb_data, &packet);
 
 	if (!(buf = g_try_malloc(PACKET_SIZE))) {
@@ -729,7 +736,7 @@ static int hw_dev_acquisition_stop(int dev_index, void *cb_data)
 
 SR_PRIV struct sr_dev_driver zeroplus_logic_cube_driver_info = {
 	.name = "zeroplus-logic-cube",
-	.longname = "Zeroplus Logic Cube LAP-C series",
+	.longname = "ZEROPLUS Logic Cube LAP-C series",
 	.api_version = 1,
 	.init = hw_init,
 	.cleanup = hw_cleanup,

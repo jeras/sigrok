@@ -39,11 +39,12 @@
 extern struct sr_hwcap_option sr_hwcap_options[];
 
 static uint64_t limit_samples = 0;
+static uint64_t limit_frames = 0;
 static struct sr_output_format *output_format = NULL;
 static int default_output_format = FALSE;
 static char *output_format_param = NULL;
 static char *input_format_param = NULL;
-static GData *pd_ann_visible = NULL;
+static GHashTable *pd_ann_visible = NULL;
 
 static gboolean opt_version = FALSE;
 static gint opt_loglevel = SR_LOG_WARN; /* Show errors+warnings per default. */
@@ -56,29 +57,51 @@ static gchar *opt_probes = NULL;
 static gchar *opt_triggers = NULL;
 static gchar *opt_pds = NULL;
 static gchar *opt_pd_stack = NULL;
+static gchar *opt_pd_annotations = NULL;
 static gchar *opt_input_format = NULL;
 static gchar *opt_output_format = NULL;
 static gchar *opt_time = NULL;
 static gchar *opt_samples = NULL;
+static gchar *opt_frames = NULL;
 static gchar *opt_continuous = NULL;
 
 static GOptionEntry optargs[] = {
-	{"version", 'V', 0, G_OPTION_ARG_NONE, &opt_version, "Show version and support list", NULL},
-	{"loglevel", 'l', 0, G_OPTION_ARG_INT, &opt_loglevel, "Select libsigrok/libsigrokdecode loglevel", NULL},
-	{"list-devices", 'D', 0, G_OPTION_ARG_NONE, &opt_list_devs, "Scan for devices", NULL},
-	{"device", 'd', 0, G_OPTION_ARG_STRING, &opt_dev, "Use specified device", NULL},
-	{"input-file", 'i', 0, G_OPTION_ARG_FILENAME, &opt_input_file, "Load input from file", NULL},
-	{"input-format", 'I', 0, G_OPTION_ARG_STRING, &opt_input_format, "Input format", NULL},
-	{"output-file", 'o', 0, G_OPTION_ARG_FILENAME, &opt_output_file, "Save output to file", NULL},
-	{"output-format", 'O', 0, G_OPTION_ARG_STRING, &opt_output_format, "Output format", NULL},
-	{"probes", 'p', 0, G_OPTION_ARG_STRING, &opt_probes, "Probes to use", NULL},
-	{"triggers", 't', 0, G_OPTION_ARG_STRING, &opt_triggers, "Trigger configuration", NULL},
-	{"wait-trigger", 'w', 0, G_OPTION_ARG_NONE, &opt_wait_trigger, "Wait for trigger", NULL},
-	{"protocol-decoders", 'a', 0, G_OPTION_ARG_STRING, &opt_pds, "Protocol decoders to run", NULL},
-	{"protocol-decoder-stack", 's', 0, G_OPTION_ARG_STRING, &opt_pd_stack, "Protocol decoder stack", NULL},
-	{"time", 0, 0, G_OPTION_ARG_STRING, &opt_time, "How long to sample (ms)", NULL},
-	{"samples", 0, 0, G_OPTION_ARG_STRING, &opt_samples, "Number of samples to acquire", NULL},
-	{"continuous", 0, 0, G_OPTION_ARG_NONE, &opt_continuous, "Sample continuously", NULL},
+	{"version", 'V', 0, G_OPTION_ARG_NONE, &opt_version,
+			"Show version and support list", NULL},
+	{"loglevel", 'l', 0, G_OPTION_ARG_INT, &opt_loglevel,
+			"Set libsigrok/libsigrokdecode loglevel", NULL},
+	{"list-devices", 'D', 0, G_OPTION_ARG_NONE, &opt_list_devs,
+			"Scan for devices", NULL},
+	{"device", 'd', 0, G_OPTION_ARG_STRING, &opt_dev,
+			"Use specified device", NULL},
+	{"input-file", 'i', 0, G_OPTION_ARG_FILENAME, &opt_input_file,
+			"Load input from file", NULL},
+	{"input-format", 'I', 0, G_OPTION_ARG_STRING, &opt_input_format,
+			"Input format", NULL},
+	{"output-file", 'o', 0, G_OPTION_ARG_FILENAME, &opt_output_file,
+			"Save output to file", NULL},
+	{"output-format", 'O', 0, G_OPTION_ARG_STRING, &opt_output_format,
+			"Output format", NULL},
+	{"probes", 'p', 0, G_OPTION_ARG_STRING, &opt_probes,
+			"Probes to use", NULL},
+	{"triggers", 't', 0, G_OPTION_ARG_STRING, &opt_triggers,
+			"Trigger configuration", NULL},
+	{"wait-trigger", 'w', 0, G_OPTION_ARG_NONE, &opt_wait_trigger,
+			"Wait for trigger", NULL},
+	{"protocol-decoders", 'a', 0, G_OPTION_ARG_STRING, &opt_pds,
+			"Protocol decoders to run", NULL},
+	{"protocol-decoder-stack", 's', 0, G_OPTION_ARG_STRING, &opt_pd_stack,
+			"Protocol decoder stack", NULL},
+	{"protocol-decoder-annotations", 'A', 0, G_OPTION_ARG_STRING, &opt_pd_annotations,
+			"Protocol decoder annotation(s) to show", NULL},
+	{"time", 0, 0, G_OPTION_ARG_STRING, &opt_time,
+			"How long to sample (ms)", NULL},
+	{"samples", 0, 0, G_OPTION_ARG_STRING, &opt_samples,
+			"Number of samples to acquire", NULL},
+	{"frames", 0, 0, G_OPTION_ARG_STRING, &opt_frames,
+			"Number of frames to acquire", NULL},
+	{"continuous", 0, 0, G_OPTION_ARG_NONE, &opt_continuous,
+			"Sample continuously", NULL},
 	{NULL, 0, 0, 0, NULL, NULL, NULL}
 };
 
@@ -181,9 +204,12 @@ static void show_dev_list(void)
 static void show_dev_detail(void)
 {
 	struct sr_dev *dev;
-	struct sr_hwcap_option *hwo;
+	const struct sr_hwcap_option *hwo;
 	const struct sr_samplerates *samplerates;
-	int cap, *hwcaps, i;
+	struct sr_rational *rationals;
+	uint64_t *integers;
+	const int *hwcaps;
+	int cap, i;
 	char *s, *title;
 	const char *charopts, **stropts;
 
@@ -217,6 +243,7 @@ static void show_dev_detail(void)
 		}
 
 		if (hwo->hwcap == SR_HWCAP_PATTERN_MODE) {
+			/* Pattern generator modes */
 			printf("    %s", hwo->shortname);
 			if (sr_dev_info_get(dev, SR_DI_PATTERNS,
 					(const void **)&stropts) == SR_OK) {
@@ -226,15 +253,15 @@ static void show_dev_detail(void)
 			} else {
 				printf("\n");
 			}
+
 		} else if (hwo->hwcap == SR_HWCAP_SAMPLERATE) {
-			printf("    %s", hwo->shortname);
 			/* Supported samplerates */
+			printf("    %s", hwo->shortname);
 			if (sr_dev_info_get(dev, SR_DI_SAMPLERATES,
 					(const void **)&samplerates) != SR_OK) {
 				printf("\n");
 				continue;
 			}
-
 			if (samplerates->step) {
 				/* low */
 				if (!(s = sr_samplerate_string(samplerates->low)))
@@ -253,11 +280,85 @@ static void show_dev_detail(void)
 				g_free(s);
 			} else {
 				printf(" - supported samplerates:\n");
-				for (i = 0; samplerates->list[i]; i++) {
+				for (i = 0; samplerates->list[i]; i++)
 					printf("      %s\n", sr_samplerate_string(samplerates->list[i]));
-				}
 			}
+
+		} else if (hwo->hwcap == SR_HWCAP_BUFFERSIZE) {
+			/* Supported buffer sizes */
+			printf("    %s", hwo->shortname);
+			if (sr_dev_info_get(dev, SR_DI_BUFFERSIZES,
+					(const void **)&integers) != SR_OK) {
+				printf("\n");
+				continue;
+			}
+			printf(" - supported buffer sizes:\n");
+			for (i = 0; integers[i]; i++)
+				printf("      %"PRIu64"\n", integers[i]);
+
+		} else if (hwo->hwcap == SR_HWCAP_TIMEBASE) {
+			/* Supported time bases */
+			printf("    %s", hwo->shortname);
+			if (sr_dev_info_get(dev, SR_DI_TIMEBASES,
+					(const void **)&rationals) != SR_OK) {
+				printf("\n");
+				continue;
+			}
+			printf(" - supported time bases:\n");
+			for (i = 0; rationals[i].p && rationals[i].q; i++)
+				printf("      %s\n", sr_period_string(
+						rationals[i].p * rationals[i].q));
+
+		} else if (hwo->hwcap == SR_HWCAP_TRIGGER_SOURCE) {
+			/* Supported trigger sources */
+			printf("    %s", hwo->shortname);
+			if (sr_dev_info_get(dev, SR_DI_TRIGGER_SOURCES,
+					(const void **)&stropts) != SR_OK) {
+				printf("\n");
+				continue;
+			}
+			printf(" - supported trigger sources:\n");
+			for (i = 0; stropts[i]; i++)
+				printf("      %s\n", stropts[i]);
+
+		} else if (hwo->hwcap == SR_HWCAP_FILTER) {
+			/* Supported trigger sources */
+			printf("    %s", hwo->shortname);
+			if (sr_dev_info_get(dev, SR_DI_FILTERS,
+					(const void **)&stropts) != SR_OK) {
+				printf("\n");
+				continue;
+			}
+			printf(" - supported filter targets:\n");
+			for (i = 0; stropts[i]; i++)
+				printf("      %s\n", stropts[i]);
+
+		} else if (hwo->hwcap == SR_HWCAP_VDIV) {
+			/* Supported volts/div values */
+			printf("    %s", hwo->shortname);
+			if (sr_dev_info_get(dev, SR_DI_VDIVS,
+					(const void **)&rationals) != SR_OK) {
+				printf("\n");
+				continue;
+			}
+			printf(" - supported volts/div:\n");
+			for (i = 0; rationals[i].p && rationals[i].q; i++)
+				printf("      %s\n", sr_voltage_string(	&rationals[i]));
+
+		} else if (hwo->hwcap == SR_HWCAP_COUPLING) {
+			/* Supported coupling settings */
+			printf("    %s", hwo->shortname);
+			if (sr_dev_info_get(dev, SR_DI_COUPLING,
+					(const void **)&stropts) != SR_OK) {
+				printf("\n");
+				continue;
+			}
+			printf(" - supported coupling options:\n");
+			for (i = 0; stropts[i]; i++)
+				printf("      %s\n", stropts[i]);
+
 		} else {
+			/* Everything else */
 			printf("    %s\n", hwo->shortname);
 		}
 	}
@@ -273,7 +374,7 @@ static void show_pd_detail(void)
 	pdtokens = g_strsplit(opt_pds, ",", -1);
 	for (pdtok = pdtokens; *pdtok; pdtok++) {
 		if (!(dec = srd_decoder_get_by_id(*pdtok))) {
-			printf("Protocol decoder %s not found.", *pdtok);
+			printf("Protocol decoder %s not found.\n", *pdtok);
 			return;
 		}
 		printf("ID: %s\nName: %s\nLong name: %s\nDescription: %s\n",
@@ -322,17 +423,23 @@ static void show_pd_detail(void)
 static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 {
 	static struct sr_output *o = NULL;
-	static int probelist[SR_MAX_NUM_PROBES + 1] = { 0 };
+	static int logic_probelist[SR_MAX_NUM_PROBES] = { 0 };
+	static struct sr_probe *analog_probelist[SR_MAX_NUM_PROBES];
 	static uint64_t received_samples = 0;
 	static int unitsize = 0;
 	static int triggered = 0;
 	static FILE *outfile = NULL;
+	static int num_analog_probes = 0;
 	struct sr_probe *probe;
-	struct sr_datafeed_header *header;
 	struct sr_datafeed_logic *logic;
-	int num_enabled_probes, sample_size, ret, i;
+	struct sr_datafeed_meta_logic *meta_logic;
+	struct sr_datafeed_analog *analog;
+	struct sr_datafeed_meta_analog *meta_analog;
+	static int num_enabled_analog_probes = 0;
+	int num_enabled_probes, sample_size, data_offset, ret, i, j;
 	uint64_t output_len, filter_out_len;
 	uint8_t *output_buf, *filter_out;
+	float asample;
 
 	/* If the first packet to come in isn't a header, don't even try. */
 	if (packet->type != SR_DF_HEADER && o == NULL)
@@ -356,39 +463,8 @@ static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 				exit(1);
 			}
 		}
-
-		header = packet->payload;
-		num_enabled_probes = 0;
-		for (i = 0; i < header->num_logic_probes; i++) {
-			probe = g_slist_nth_data(dev->probes, i);
-			if (probe->enabled)
-				probelist[num_enabled_probes++] = probe->index;
-		}
-		/* How many bytes we need to store num_enabled_probes bits */
-		unitsize = (num_enabled_probes + 7) / 8;
-
-		outfile = stdout;
-		if (opt_output_file) {
-			if (default_output_format) {
-				/* output file is in session format, which means we'll
-				 * dump everything in the datastore as it comes in,
-				 * and save from there after the session. */
-				outfile = NULL;
-				ret = sr_datastore_new(unitsize, &(dev->datastore));
-				if (ret != SR_OK) {
-					g_critical("Failed to create datastore.");
-					exit(1);
-				}
-			} else {
-				/* saving to a file in whatever format was set
-				 * with -O, so all we need is a filehandle */
-				outfile = g_fopen(opt_output_file, "wb");
-			}
-		}
-		if (opt_pds)
-			srd_session_start(num_enabled_probes, unitsize,
-					header->samplerate);
 		break;
+
 	case SR_DF_END:
 		g_debug("cli: Received SR_DF_END");
 		if (!o) {
@@ -416,6 +492,7 @@ static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 		g_free(o);
 		o = NULL;
 		break;
+
 	case SR_DF_TRIGGER:
 		g_debug("cli: received SR_DF_TRIGGER");
 		if (o->format->event)
@@ -423,67 +500,175 @@ static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 					 &output_len);
 		triggered = 1;
 		break;
+
+	case SR_DF_META_LOGIC:
+		g_message("cli: Received SR_DF_META_LOGIC");
+		meta_logic = packet->payload;
+		num_enabled_probes = 0;
+		for (i = 0; i < meta_logic->num_probes; i++) {
+			probe = g_slist_nth_data(dev->probes, i);
+			if (probe->enabled)
+				logic_probelist[num_enabled_probes++] = probe->index;
+		}
+		/* How many bytes we need to store num_enabled_probes bits */
+		unitsize = (num_enabled_probes + 7) / 8;
+
+		outfile = stdout;
+		if (opt_output_file) {
+			if (default_output_format) {
+				/* output file is in session format, which means we'll
+				 * dump everything in the datastore as it comes in,
+				 * and save from there after the session. */
+				outfile = NULL;
+				ret = sr_datastore_new(unitsize, &(dev->datastore));
+				if (ret != SR_OK) {
+					printf("Failed to create datastore.\n");
+					exit(1);
+				}
+			} else {
+				/* saving to a file in whatever format was set
+				 * with --format, so all we need is a filehandle */
+				outfile = g_fopen(opt_output_file, "wb");
+			}
+		}
+		if (opt_pds)
+			srd_session_start(num_enabled_probes, unitsize,
+					meta_logic->samplerate);
+		break;
+
 	case SR_DF_LOGIC:
 		logic = packet->payload;
-		sample_size = logic->unitsize;
 		g_message("cli: received SR_DF_LOGIC, %"PRIu64" bytes", logic->length);
-		break;
-	}
+		sample_size = logic->unitsize;
+		if (logic->length == 0)
+			break;
 
-	/* not supporting anything but SR_DF_LOGIC for now */
+		/* Don't store any samples until triggered. */
+		if (opt_wait_trigger && !triggered)
+			break;
 
-	if (sample_size == -1 || logic->length == 0)
-		return;
+		if (limit_samples && received_samples >= limit_samples)
+			break;
 
-	/* Don't store any samples until triggered. */
-	if (opt_wait_trigger && !triggered)
-		return;
+		ret = sr_filter_probes(sample_size, unitsize, logic_probelist,
+					   logic->data, logic->length,
+					   &filter_out, &filter_out_len);
+		if (ret != SR_OK)
+			break;
 
-	if (limit_samples && received_samples >= limit_samples)
-		return;
+		/* what comes out of the filter is guaranteed to be packed into the
+		 * minimum size needed to support the number of samples at this sample
+		 * size. however, the driver may have submitted too much -- cut off
+		 * the buffer of the last packet according to the sample limit.
+		 */
+		if (limit_samples && (received_samples + logic->length / sample_size >
+				limit_samples * sample_size))
+			filter_out_len = limit_samples * sample_size - received_samples;
 
-	/* TODO: filters only support SR_DF_LOGIC */
-	ret = sr_filter_probes(sample_size, unitsize, probelist,
-				   logic->data, logic->length,
-				   &filter_out, &filter_out_len);
-	if (ret != SR_OK)
-		return;
+		if (dev->datastore)
+			sr_datastore_put(dev->datastore, filter_out,
+					 filter_out_len, sample_size, logic_probelist);
 
-	/* what comes out of the filter is guaranteed to be packed into the
-	 * minimum size needed to support the number of samples at this sample
-	 * size. however, the driver may have submitted too much -- cut off
-	 * the buffer of the last packet according to the sample limit.
-	 */
-	if (limit_samples && (received_samples + logic->length / sample_size >
-			limit_samples * sample_size))
-		filter_out_len = limit_samples * sample_size - received_samples;
+		if (opt_output_file && default_output_format)
+			/* saving to a session file, don't need to do anything else
+			 * to this data for now. */
+			goto cleanup;
 
-	if (dev->datastore)
-		sr_datastore_put(dev->datastore, filter_out,
-				 filter_out_len, sample_size, probelist);
-
-	if (opt_output_file && default_output_format)
-		/* saving to a session file, don't need to do anything else
-		 * to this data for now. */
-		goto cleanup;
-
-	if (opt_pds) {
-		if (srd_session_send(received_samples, (uint8_t*)filter_out,
-				filter_out_len) != SRD_OK)
-			sr_session_halt();
-	} else {
-		output_len = 0;
-		if (o->format->data && packet->type == o->format->df_type)
-			o->format->data(o, filter_out, filter_out_len, &output_buf, &output_len);
-		if (output_len) {
-			fwrite(output_buf, 1, output_len, outfile);
-			g_free(output_buf);
+		if (opt_pds) {
+			if (srd_session_send(received_samples, (uint8_t*)filter_out,
+					filter_out_len) != SRD_OK)
+				sr_session_halt();
+		} else {
+			output_len = 0;
+			if (o->format->data && packet->type == o->format->df_type)
+				o->format->data(o, filter_out, filter_out_len, &output_buf, &output_len);
+			if (output_len) {
+				fwrite(output_buf, 1, output_len, outfile);
+				g_free(output_buf);
+			}
 		}
+
+		cleanup:
+		g_free(filter_out);
+		received_samples += logic->length / sample_size;
+		break;
+
+	case SR_DF_META_ANALOG:
+		g_message("cli: Received SR_DF_META_ANALOG");
+		meta_analog = packet->payload;
+		num_analog_probes = meta_analog->num_probes;
+		num_enabled_analog_probes = 0;
+		for (i = 0; i < num_analog_probes; i++) {
+			probe = g_slist_nth_data(dev->probes, i);
+			if (probe->enabled)
+				analog_probelist[num_enabled_analog_probes++] = probe;
+		}
+
+		outfile = stdout;
+		if (opt_output_file) {
+			if (default_output_format) {
+				/* output file is in session format, which means we'll
+				 * dump everything in the datastore as it comes in,
+				 * and save from there after the session. */
+				outfile = NULL;
+				ret = sr_datastore_new(unitsize, &(dev->datastore));
+				if (ret != SR_OK) {
+					printf("Failed to create datastore.\n");
+					exit(1);
+				}
+			} else {
+				/* saving to a file in whatever format was set
+				 * with --format, so all we need is a filehandle */
+				outfile = g_fopen(opt_output_file, "wb");
+			}
+		}
+//		if (opt_pds)
+//			srd_session_start(num_enabled_probes, unitsize,
+//					meta_logic->samplerate);
+		break;
+
+	case SR_DF_ANALOG:
+		analog = packet->payload;
+		g_message("cli: received SR_DF_ANALOG, %d samples", analog->num_samples);
+		if (analog->num_samples == 0)
+			break;
+
+		if (limit_samples && received_samples >= limit_samples)
+			break;
+
+		data_offset = 0;
+		for (i = 0; i < analog->num_samples; i++) {
+			for (j = 0; j < num_enabled_analog_probes; j++) {
+				asample = analog->data[data_offset++];
+				printf("%s: %f\n", analog_probelist[j]->name, asample);
+			}
+//			asample1 = asample2 = 0.0;
+//			asample1 = analog->data[data_offset++];
+//			asample2 = analog->data[i * num_analog_probes + 1];
+//			printf("%d\t%f\t%f\n", received_samples+i+1, asample1, asample2);
+		}
+
+//		output_len = 0;
+//		if (o->format->data && packet->type == o->format->df_type)
+//			o->format->data(o, filter_out, filter_out_len, &output_buf, &output_len);
+
+		received_samples += analog->num_samples;
+		break;
+
+	case SR_DF_FRAME_BEGIN:
+		/* TODO */
+		printf("BEGIN\n");
+		break;
+
+	case SR_DF_FRAME_END:
+		/* TODO */
+		printf("END\n");
+		break;
+
+	default:
+		g_message("received unknown packet type %d", packet->type);
 	}
 
-cleanup:
-	g_free(filter_out);
-	received_samples += logic->length / sample_size;
 }
 
 /* Register the given PDs for this session.
@@ -495,16 +680,18 @@ static int register_pds(struct sr_dev *dev, const char *pdstring)
 {
 	GHashTable *pd_opthash;
 	struct srd_decoder_inst *di;
+	int ret;
 	char **pdtokens, **pdtok, *pd_name;
 
 	/* Avoid compiler warnings. */
 	(void)dev;
 
-	g_datalist_init(&pd_ann_visible);
-	pdtokens = g_strsplit(pdstring, ",", -1);
-	pd_opthash = NULL;
+	ret = 0;
+	pd_ann_visible = g_hash_table_new_full(g_str_hash, g_int_equal,
+			g_free, NULL);
 	pd_name = NULL;
-
+	pd_opthash = NULL;
+	pdtokens = g_strsplit(pdstring, ",", 0);
 	for (pdtok = pdtokens; *pdtok; pdtok++) {
 		if (!(pd_opthash = parse_generic_arg(*pdtok))) {
 			g_critical("Invalid protocol decoder option '%s'.", *pdtok);
@@ -515,20 +702,31 @@ static int register_pds(struct sr_dev *dev, const char *pdstring)
 		g_hash_table_remove(pd_opthash, "sigrok_key");
 		if (srd_decoder_load(pd_name) != SRD_OK) {
 			g_critical("Failed to load protocol decoder %s.", pd_name);
+			ret = 1;
 			goto err_out;
 		}
 		if (!(di = srd_inst_new(pd_name, pd_opthash))) {
 			g_critical("Failed to instantiate protocol decoder %s.", pd_name);
+			ret = 1;
 			goto err_out;
 		}
-		g_datalist_set_data(&pd_ann_visible, di->inst_id, pd_name);
+
+		/* If no annotation list was specified, add them all in now.
+		 * This will be pared down later to leave only the last PD
+		 * in the stack.
+		 */
+		if (!opt_pd_annotations)
+			g_hash_table_insert(pd_ann_visible,
+					    g_strdup(di->inst_id), NULL);
 
 		/* Any keys left in the options hash are probes, where the key
 		 * is the probe name as specified in the decoder class, and the
 		 * value is the probe number i.e. the order in which the PD's
 		 * incoming samples are arranged. */
-		if (srd_inst_probe_set_all(di, pd_opthash) != SRD_OK)
+		if (srd_inst_probe_set_all(di, pd_opthash) != SRD_OK) {
+			ret = 1;
 			goto err_out;
+		}
 		g_hash_table_destroy(pd_opthash);
 		pd_opthash = NULL;
 	}
@@ -540,26 +738,178 @@ err_out:
 	if (pd_name)
 		g_free(pd_name);
 
+	return ret;
+}
+
+int setup_pd_stack(void)
+{
+	struct srd_decoder_inst *di_from, *di_to;
+	int ret, i;
+	char **pds, **ids;
+
+	/* Set up the protocol decoder stack. */
+	pds = g_strsplit(opt_pds, ",", 0);
+	if (g_strv_length(pds) > 1) {
+		if (opt_pd_stack) {
+			/* A stack setup was specified, use that. */
+			g_strfreev(pds);
+			pds = g_strsplit(opt_pd_stack, ",", 0);
+			if (g_strv_length(pds) < 2) {
+				g_strfreev(pds);
+				g_critical("Specify at least two protocol decoders to stack.");
+				return 1;
+			}
+		}
+
+		/* First PD goes at the bottom of the stack. */
+		ids = g_strsplit(pds[0], ":", 0);
+		if (!(di_from = srd_inst_find_by_id(ids[0]))) {
+			g_strfreev(ids);
+			g_critical("Cannot stack protocol decoder '%s': "
+					"instance not found.", pds[0]);
+			return 1;
+		}
+		g_strfreev(ids);
+
+		/* Every subsequent PD goes on top. */
+		for (i = 1; pds[i]; i++) {
+			ids = g_strsplit(pds[i], ":", 0);
+			if (!(di_to = srd_inst_find_by_id(ids[0]))) {
+				g_strfreev(ids);
+				g_critical("Cannot stack protocol decoder '%s': "
+						"instance not found.", pds[i]);
+				return 1;
+			}
+			g_strfreev(ids);
+			if ((ret = srd_inst_stack(di_from, di_to)) != SRD_OK)
+				return 1;
+
+			/* Don't show annotation from this PD. Only the last PD in
+			 * the stack will be left on the annotation list (unless
+			 * the annotation list was specifically provided).
+			 */
+			if (!opt_pd_annotations)
+				g_hash_table_remove(pd_ann_visible,
+						    di_from->inst_id);
+
+			di_from = di_to;
+		}
+	}
+	g_strfreev(pds);
+
 	return 0;
 }
 
-void show_pd_annotation(struct srd_proto_data *pdata, void *cb_data)
+int setup_pd_annotations(void)
+{
+	GSList *l;
+	struct srd_decoder *dec;
+	int ann;
+	char **pds, **pdtok, **keyval, **ann_descr;
+
+	/* Set up custom list of PDs and annotations to show. */
+	if (opt_pd_annotations) {
+		pds = g_strsplit(opt_pd_annotations, ",", 0);
+		for (pdtok = pds; *pdtok && **pdtok; pdtok++) {
+			ann = 0;
+			keyval = g_strsplit(*pdtok, "=", 0);
+			if (!(dec = srd_decoder_get_by_id(keyval[0]))) {
+				g_critical("Protocol decoder '%s' not found.", keyval[0]);
+				return 1;
+			}
+			if (!dec->annotations) {
+				g_critical("Protocol decoder '%s' has no annotations.", keyval[0]);
+				return 1;
+			}
+			if (g_strv_length(keyval) == 2) {
+				for (l = dec->annotations; l; l = l->next, ann++) {
+					ann_descr = l->data;
+					if (!canon_cmp(ann_descr[0], keyval[1]))
+						/* Found it. */
+						break;
+				}
+				if (!l) {
+					g_critical("Annotation '%s' not found "
+							"for protocol decoder '%s'.", keyval[1], keyval[0]);
+					return 1;
+				}
+			}
+			g_debug("cli: showing protocol decoder annotation %d from '%s'", ann, keyval[0]);
+			g_hash_table_insert(pd_ann_visible, g_strdup(keyval[0]), GINT_TO_POINTER(ann));
+			g_strfreev(keyval);
+		}
+		g_strfreev(pds);
+	}
+
+	return 0;
+}
+
+int setup_output_format(void)
+{
+	GHashTable *fmtargs;
+	GHashTableIter iter;
+	gpointer key, value;
+	struct sr_output_format **outputs;
+	int i;
+	char *fmtspec;
+
+	if (!opt_output_format) {
+		opt_output_format = DEFAULT_OUTPUT_FORMAT;
+		/* we'll need to remember this so when saving to a file
+		 * later, sigrok session format will be used.
+		 */
+		default_output_format = TRUE;
+	}
+	fmtargs = parse_generic_arg(opt_output_format);
+	fmtspec = g_hash_table_lookup(fmtargs, "sigrok_key");
+	if (!fmtspec) {
+		g_critical("Invalid output format.");
+		return 1;
+	}
+	outputs = sr_output_list();
+	for (i = 0; outputs[i]; i++) {
+		if (strcmp(outputs[i]->id, fmtspec))
+			continue;
+		g_hash_table_remove(fmtargs, "sigrok_key");
+		output_format = outputs[i];
+		g_hash_table_iter_init(&iter, fmtargs);
+		while (g_hash_table_iter_next(&iter, &key, &value)) {
+			/* only supporting one parameter per output module
+			 * for now, and only its value */
+			output_format_param = g_strdup(value);
+			break;
+		}
+		break;
+	}
+	if (!output_format) {
+		g_critical("Invalid output format %s.", opt_output_format);
+		return 1;
+	}
+	g_hash_table_destroy(fmtargs);
+
+	return 0;
+}
+
+void show_pd_annotations(struct srd_proto_data *pdata, void *cb_data)
 {
 	int i;
 	char **annotations;
+	gpointer ann_format;
 
 	/* 'cb_data' is not used in this specific callback. */
 	(void)cb_data;
 
-	if (pdata->ann_format != 0) {
-		/* CLI only shows the default annotation format. */
+	if (!pd_ann_visible)
 		return;
-	}
 
-	if (!g_datalist_get_data(&pd_ann_visible, pdata->pdo->di->inst_id)) {
+	if (!g_hash_table_lookup_extended(pd_ann_visible, pdata->pdo->di->inst_id,
+			NULL, &ann_format))
 		/* Not in the list of PDs whose annotations we're showing. */
 		return;
-	}
+
+	if (pdata->ann_format != GPOINTER_TO_INT(ann_format))
+		/* We don't want this particular format from the PD. */
+		return;
 
 	annotations = pdata->data;
 	if (opt_loglevel > SR_LOG_WARN)
@@ -655,6 +1005,9 @@ static struct sr_input_format *determine_input_file_format(
 		g_critical("Error: no matching input module found.");
 		return NULL;
 	}
+
+	g_debug("cli: Autodetected '%s' input format for file '%s'.",
+		inputs[i]->id, filename);
 		
 	return inputs[i];
 }
@@ -747,9 +1100,11 @@ static int set_dev_options(struct sr_dev *dev, GHashTable *args)
 	GHashTableIter iter;
 	gpointer key, value;
 	int ret, i;
+	float tmp_float;
 	uint64_t tmp_u64;
-	gboolean found;
+	struct sr_rational tmp_rat;
 	gboolean tmp_bool;
+	gboolean found;
 
 	g_hash_table_iter_init(&iter, args);
 	while (g_hash_table_iter_next(&iter, &key, &value)) {
@@ -783,6 +1138,23 @@ static int set_dev_options(struct sr_dev *dev, GHashTable *args)
 				ret = dev->driver->dev_config_set(dev->driver_index,
 						sr_hwcap_options[i].hwcap, 
 						GINT_TO_POINTER(tmp_bool));
+				break;
+			case SR_T_FLOAT:
+				tmp_float = strtof(value, NULL);
+				ret = dev->driver->dev_config_set(dev->driver_index,
+						sr_hwcap_options[i].hwcap, &tmp_float);
+				break;
+			case SR_T_RATIONAL_PERIOD:
+				if ((ret = sr_parse_period(value, &tmp_rat)) != SR_OK)
+					break;
+				ret = dev->driver->dev_config_set(dev->driver_index,
+						sr_hwcap_options[i].hwcap, &tmp_rat);
+				break;
+			case SR_T_RATIONAL_VOLT:
+				if ((ret = sr_parse_voltage(value, &tmp_rat)) != SR_OK)
+					break;
+				ret = dev->driver->dev_config_set(dev->driver_index,
+						sr_hwcap_options[i].hwcap, &tmp_rat);
 				break;
 			default:
 				ret = SR_ERR;
@@ -935,6 +1307,16 @@ static void run_session(void)
 		}
 	}
 
+	if (opt_frames) {
+		if ((sr_parse_sizestring(opt_frames, &limit_frames) != SR_OK)
+			|| (dev->driver->dev_config_set(dev->driver_index,
+			    SR_HWCAP_LIMIT_FRAMES, &limit_frames) != SR_OK)) {
+			printf("Failed to configure frame limit.\n");
+			sr_session_destroy();
+			return;
+		}
+	}
+
 	if (dev->driver->dev_config_set(dev->driver_index,
 		  SR_HWCAP_PROBECONFIG, (char *)dev->probes) != SR_OK) {
 		g_critical("Failed to configure probes.");
@@ -974,7 +1356,7 @@ static void logger(const gchar *log_domain, GLogLevelFlags log_level,
 	 * All messages, warnings, errors etc. go to stderr (not stdout) in
 	 * order to not mess up the CLI tool data output, e.g. VCD output.
 	 */
-	if (log_level & (G_LOG_LEVEL_ERROR | G_LOG_LEVEL_WARNING)
+	if (log_level & (G_LOG_LEVEL_ERROR | G_LOG_LEVEL_CRITICAL | G_LOG_LEVEL_WARNING)
 			|| opt_loglevel > SR_LOG_WARN) {
 		fprintf(stderr, "%s\n", message);
 		fflush(stderr);
@@ -985,13 +1367,6 @@ int main(int argc, char **argv)
 {
 	GOptionContext *context;
 	GError *error;
-	GHashTable *fmtargs;
-	GHashTableIter iter;
-	gpointer key, value;
-	struct sr_output_format **outputs;
-	struct srd_decoder_inst *di_from, *di_to;
-	int i, ret;
-	char *fmtspec, **pds;
 
 	g_log_set_default_handler(logger, NULL);
 
@@ -1005,105 +1380,32 @@ int main(int argc, char **argv)
 	}
 
 	/* Set the loglevel (amount of messages to output) for libsigrok. */
-	if (sr_log_loglevel_set(opt_loglevel) != SR_OK) {
-		g_critical("sr_log_loglevel_set(%d) failed.", opt_loglevel);
+	if (sr_log_loglevel_set(opt_loglevel) != SR_OK)
 		return 1;
-	}
 
 	/* Set the loglevel (amount of messages to output) for libsigrokdecode. */
-	if (srd_log_loglevel_set(opt_loglevel) != SRD_OK) {
-		g_critical("srd_log_loglevel_set(%d) failed.", opt_loglevel);
+	if (srd_log_loglevel_set(opt_loglevel) != SRD_OK)
 		return 1;
-	}
 
 	if (sr_init() != SR_OK)
 		return 1;
 
 	if (opt_pds) {
-		if (srd_init(NULL) != SRD_OK) {
-			g_critical("Failed to initialize sigrokdecode.");
+		if (srd_init(NULL) != SRD_OK)
 			return 1;
-		}
-		if (register_pds(NULL, opt_pds) != 0) {
-			g_critical("Failed to register protocol decoders.");
+		if (register_pds(NULL, opt_pds) != 0)
 			return 1;
-		}
 		if (srd_pd_output_callback_add(SRD_OUTPUT_ANN,
-				show_pd_annotation, NULL) != SRD_OK) {
-			g_critical("Failed to register protocol decoder callback.");
+				show_pd_annotations, NULL) != SRD_OK)
 			return 1;
-		}
-
-		pds = g_strsplit(opt_pds, ",", 0);
-		if (g_strv_length(pds) > 1) {
-			if (opt_pd_stack) {
-				/* A stack setup was specified, use that. */
-				g_strfreev(pds);
-				pds = g_strsplit(opt_pd_stack, ",", 0);
-				if (g_strv_length(pds) < 2) {
-					g_strfreev(pds);
-					g_critical("Specify at least two protocol decoders to stack.");
-					return 1;
-				}
-			}
-
-			if (!(di_from = srd_inst_find_by_id(pds[0]))) {
-				g_critical("Cannot stack protocol decoder '%s': "
-						"instance not found.", pds[0]);
-				return 1;
-			}
-			for (i = 1; pds[i]; i++) {
-				if (!(di_to = srd_inst_find_by_id(pds[i]))) {
-					g_critical("Cannot stack protocol decoder '%s': "
-							"instance not found.", pds[i]);
-					return 1;
-				}
-				if ((ret = srd_inst_stack(di_from, di_to)) != SRD_OK)
-					return ret;
-
-				/* Don't show annotation from this PD. Only the last PD in
-				 * the stack will be left on the annotation list.
-				 */
-				g_datalist_remove_data(&pd_ann_visible, di_from->inst_id);
-
-				di_from = di_to;
-			}
-		}
-		g_strfreev(pds);
+		if (setup_pd_stack() != 0)
+			return 1;
+		if (setup_pd_annotations() != 0)
+			return 1;
 	}
 
-	if (!opt_output_format) {
-		opt_output_format = DEFAULT_OUTPUT_FORMAT;
-		/* we'll need to remember this so when saving to a file
-		 * later, sigrok session format will be used.
-		 */
-		default_output_format = TRUE;
-	}
-	fmtargs = parse_generic_arg(opt_output_format);
-	fmtspec = g_hash_table_lookup(fmtargs, "sigrok_key");
-	if (!fmtspec) {
-		g_critical("Invalid output format.");
+	if (setup_output_format() != 0)
 		return 1;
-	}
-	outputs = sr_output_list();
-	for (i = 0; outputs[i]; i++) {
-		if (strcmp(outputs[i]->id, fmtspec))
-			continue;
-		g_hash_table_remove(fmtargs, "sigrok_key");
-		output_format = outputs[i];
-		g_hash_table_iter_init(&iter, fmtargs);
-		while (g_hash_table_iter_next(&iter, &key, &value)) {
-			/* only supporting one parameter per output module
-			 * for now, and only its value */
-			output_format_param = g_strdup(value);
-			break;
-		}
-		break;
-	}
-	if (!output_format) {
-		g_critical("Invalid output format %s.", opt_output_format);
-		return 1;
-	}
 
 	if (opt_version)
 		show_version();
@@ -1111,7 +1413,7 @@ int main(int argc, char **argv)
 		show_dev_list();
 	else if (opt_input_file)
 		load_input_file();
-	else if (opt_samples || opt_time || opt_continuous)
+	else if (opt_samples || opt_time || opt_frames || opt_continuous)
 		run_session();
 	else if (opt_dev)
 		show_dev_detail();
@@ -1124,7 +1426,6 @@ int main(int argc, char **argv)
 		srd_exit();
 
 	g_option_context_free(context);
-	g_hash_table_destroy(fmtargs);
 	sr_exit();
 
 	return 0;

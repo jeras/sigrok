@@ -142,6 +142,16 @@ enum {
 	SR_T_UINT64,
 	SR_T_CHAR,
 	SR_T_BOOL,
+	SR_T_FLOAT,
+	SR_T_RATIONAL_PERIOD,
+	SR_T_RATIONAL_VOLT,
+};
+
+struct sr_rational {
+	/* numerator */
+	uint64_t p;
+	/* denominator */
+	uint64_t q;
 };
 
 /* sr_datafeed_packet.type values */
@@ -150,7 +160,11 @@ enum {
 	SR_DF_END,
 	SR_DF_TRIGGER,
 	SR_DF_LOGIC,
-	SR_DF_PD,
+	SR_DF_META_LOGIC,
+	SR_DF_ANALOG,
+	SR_DF_META_ANALOG,
+	SR_DF_FRAME_BEGIN,
+	SR_DF_FRAME_END,
 };
 
 struct sr_datafeed_packet {
@@ -161,14 +175,26 @@ struct sr_datafeed_packet {
 struct sr_datafeed_header {
 	int feed_version;
 	struct timeval starttime;
+};
+
+struct sr_datafeed_meta_logic {
+	int num_probes;
 	uint64_t samplerate;
-	int num_logic_probes;
 };
 
 struct sr_datafeed_logic {
 	uint64_t length;
 	uint16_t unitsize;
 	void *data;
+};
+
+struct sr_datafeed_meta_analog {
+	int num_probes;
+};
+
+struct sr_datafeed_analog {
+	int num_samples;
+	float *data;
 };
 
 struct sr_input {
@@ -249,7 +275,8 @@ enum {
 	/** The device can act as logic analyzer. */
 	SR_HWCAP_LOGIC_ANALYZER,
 
-	/* TODO: SR_HWCAP_SCOPE, SW_HWCAP_PATTERN_GENERATOR, etc.? */
+	/** The device can act as an oscilloscope. */
+	SR_HWCAP_OSCILLOSCOPE,
 
 	/*--- Device types --------------------------------------------------*/
 
@@ -274,6 +301,30 @@ enum {
 
 	/** The device supports Run Length Encoding. */
 	SR_HWCAP_RLE,
+
+	/** The device supports setting trigger slope. */
+	SR_HWCAP_TRIGGER_SLOPE,
+
+	/** Trigger source. */
+	SR_HWCAP_TRIGGER_SOURCE,
+
+	/** Horizontal trigger position */
+	SR_HWCAP_HORIZ_TRIGGERPOS,
+
+	/** Buffer size. */
+	SR_HWCAP_BUFFERSIZE,
+
+	/** Time base. */
+	SR_HWCAP_TIMEBASE,
+
+	/** Filter. */
+	SR_HWCAP_FILTER,
+
+	/** Volts/div. */
+	SR_HWCAP_VDIV,
+
+	/** Coupling. */
+	SR_HWCAP_COUPLING,
 
 	/*--- Special stuff -------------------------------------------------*/
 
@@ -304,13 +355,18 @@ enum {
 	SR_HWCAP_LIMIT_SAMPLES,
 
 	/**
+	 * The device supports setting a frame limit, i.e. how many
+	 * frames should be acquired.
+	 */
+	SR_HWCAP_LIMIT_FRAMES,
+
+	/**
 	 * The device supports continuous sampling, i.e. neither a time limit
 	 * nor a sample number limit has to be supplied, it will just acquire
 	 * samples continuously, until explicitly stopped by a certain command.
 	 */
 	SR_HWCAP_CONTINUOUS,
 
-	/* TODO: SR_HWCAP_JUST_SAMPLE or similar. */
 };
 
 struct sr_hwcap_option {
@@ -364,12 +420,24 @@ enum {
 	SR_DI_PROBE_NAMES,
 	/* Samplerates supported by this device, (struct sr_samplerates) */
 	SR_DI_SAMPLERATES,
-	/* Types of trigger supported, out of "01crf" (char *) */
+	/* Types of logic trigger supported, out of "01crf" (char *) */
 	SR_DI_TRIGGER_TYPES,
 	/* The currently set samplerate in Hz (uint64_t) */
 	SR_DI_CUR_SAMPLERATE,
 	/* Supported patterns (in pattern generator mode) */
 	SR_DI_PATTERNS,
+	/* Supported buffer sizes */
+	SR_DI_BUFFERSIZES,
+	/* Supported time bases */
+	SR_DI_TIMEBASES,
+	/* Supported trigger sources */
+	SR_DI_TRIGGER_SOURCES,
+	/* Supported filter targets */
+	SR_DI_FILTERS,
+	/* Valid volts/div values */
+	SR_DI_VDIVS,
+	/* Coupling options */
+	SR_DI_COUPLING,
 };
 
 /*
@@ -381,7 +449,7 @@ struct sr_samplerates {
 	uint64_t low;
 	uint64_t high;
 	uint64_t step;
-	uint64_t *list;
+	const uint64_t *list;
 };
 
 struct sr_dev_driver {
@@ -395,10 +463,10 @@ struct sr_dev_driver {
 	/* Device-specific */
 	int (*dev_open) (int dev_index);
 	int (*dev_close) (int dev_index);
-	void *(*dev_info_get) (int dev_index, int dev_info_id);
+	const void *(*dev_info_get) (int dev_index, int dev_info_id);
 	int (*dev_status_get) (int dev_index);
-	int *(*hwcap_get_all) (void);
-	int (*dev_config_set) (int dev_index, int hwcap, void *value);
+	const int *(*hwcap_get_all) (void);
+	int (*dev_config_set) (int dev_index, int hwcap, const void *value);
 	int (*dev_acquisition_start) (int dev_index, void *session_dev_id);
 	int (*dev_acquisition_stop) (int dev_index, void *session_dev_id);
 };

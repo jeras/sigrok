@@ -1,7 +1,7 @@
 ##
 ## This file is part of the sigrok project.
 ##
-## Copyright (C) 2010 Bert Vermeulen <bert@biot.com>
+## Copyright (C) 2012 Bert Vermeulen <bert@biot.com>
 ##
 ## This program is free software: you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -17,19 +17,19 @@
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-ACLOCAL_AMFLAGS = -I autostuff
+if HW_HANTEK_DSO
 
-SUBDIRS = contrib doc
+AM_CPPFLAGS = -DFIRMWARE_DIR='"$(FIRMWARE_DIR)"'
 
-bin_PROGRAMS = sigrok-cli
+# Local lib, this is NOT meant to be installed!
+noinst_LTLIBRARIES = libsigrokhw_hantek_dso.la
 
-sigrok_cli_SOURCES = sigrok-cli.c sigrok-cli.h parsers.c anykey.c
+libsigrokhw_hantek_dso_la_SOURCES = \
+	api.c \
+	dso.c \
+	dso.h
 
-MAINTAINERCLEANFILES = ChangeLog
+libsigrokhw_hantek_dso_la_CFLAGS = \
+	-I$(top_srcdir)
 
-.PHONY: ChangeLog
-ChangeLog:
-	git --git-dir $(top_srcdir)/../.git log > ChangeLog || touch ChangeLog
-
-dist-hook: ChangeLog
-
+endif

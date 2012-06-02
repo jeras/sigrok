@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include "sigrok.h"
 #include "sigrok-internal.h"
 
@@ -49,6 +50,9 @@ static uint64_t divcount_to_samplerate(uint8_t divcount)
 
 static int format_match(const char *filename)
 {
+	struct stat stat_buf;
+	int ret;
+
 	if (!filename) {
 		sr_err("la8 in: %s: filename was NULL", __func__);
 		// return SR_ERR; /* FIXME */
@@ -69,7 +73,19 @@ static int format_match(const char *filename)
 		return FALSE;
 	}
 
-	/* TODO: Only accept files of length 8MB + 5 bytes. */
+	/* Only accept files of length 8MB + 5 bytes. */
+	ret = stat(filename, &stat_buf);
+	if (ret != 0) {
+		sr_err("la8 in: %s: Error getting file size of '%s'",
+		       __func__, filename);
+		return FALSE;
+	}
+	if (stat_buf.st_size != (8 * 1024 * 1024 + 5)) {
+		sr_dbg("la8 in: %s: File size must be exactly 8388613 bytes ("
+		       "it actually is %d bytes in size), so this is not a "
+		       "ChronoVu LA8 file.", __func__, stat_buf.st_size);
+		return FALSE;
+	}
 
 	/* TODO: Check for divcount != 0xff. */
 
@@ -107,6 +123,7 @@ static int loadfile(struct sr_input *in, const char *filename)
 {
 	struct sr_datafeed_header header;
 	struct sr_datafeed_packet packet;
+	struct sr_datafeed_meta_logic meta;
 	struct sr_datafeed_logic logic;
 	uint8_t buf[PACKET_SIZE], divcount;
 	int i, fd, size, num_probes;
@@ -137,8 +154,13 @@ static int loadfile(struct sr_input *in, const char *filename)
 	packet.payload = &header;
 	header.feed_version = 1;
 	gettimeofday(&header.starttime, NULL);
-	header.num_logic_probes = num_probes;
-	header.samplerate = samplerate;
+	sr_session_send(in->vdev, &packet);
+
+	/* Send metadata about the SR_DF_LOGIC packets to come. */
+	packet.type = SR_DF_META_LOGIC;
+	packet.payload = &meta;
+	meta.samplerate = samplerate;
+	meta.num_probes = num_probes;
 	sr_session_send(in->vdev, &packet);
 
 	/* TODO: Handle trigger point. */

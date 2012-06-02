@@ -37,7 +37,7 @@
 
 #define NUM_PROBES 8
 
-static int hwcaps[] = {
+static const int hwcaps[] = {
 	SR_HWCAP_LOGIC_ANALYZER,
 //	SR_HWCAP_OSCILLOSCOPE,
 //	SR_HWCAP_PAT_GENERATOR,
@@ -65,7 +65,7 @@ static const char *probe_names[NUM_PROBES + 1] = {
 	NULL,
 };
 
-static uint64_t supported_samplerates[] = {
+static const uint64_t supported_samplerates[] = {
 	SR_HZ(100),
 	SR_HZ(200),
 	SR_HZ(500),
@@ -89,7 +89,7 @@ static uint64_t supported_samplerates[] = {
 	0,
 };
 
-static struct sr_samplerates samplerates = {
+static const struct sr_samplerates samplerates = {
 	0,
 	0,
 	0,
@@ -607,11 +607,11 @@ static int hw_dev_close(int dev_index)
 	return SR_OK;
 }
 
-static void *hw_dev_info_get(int dev_index, int dev_info_id)
+static const void *hw_dev_info_get(int dev_index, int dev_info_id)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
-	void *info = NULL;
+	const void *info = NULL;
 
 	if (!(sdi = sr_dev_inst_get(dev_insts, dev_index)))
 		return NULL;
@@ -650,12 +650,12 @@ static int hw_dev_status_get(int dev_index)
 	return sdi->status;
 }
 
-static int *hw_hwcap_get_all(void)
+static const int *hw_hwcap_get_all(void)
 {
 	return hwcaps;
 }
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value)
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value)
 {
 	struct sr_dev_inst *sdi;
 
@@ -664,7 +664,7 @@ static int hw_dev_config_set(int dev_index, int hwcap, void *value)
 
 	switch (hwcap) {
 	case SR_HWCAP_SAMPLERATE:
-		return mso_configure_rate(sdi, *(uint64_t *) value);
+		return mso_configure_rate(sdi, *(const uint64_t *) value);
 	case SR_HWCAP_PROBECONFIG:
 	case SR_HWCAP_LIMIT_SAMPLES:
 	default:

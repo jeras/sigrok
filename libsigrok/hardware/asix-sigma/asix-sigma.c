@@ -42,7 +42,7 @@
 
 static GSList *dev_insts = NULL;
 
-static uint64_t supported_samplerates[] = {
+static const uint64_t supported_samplerates[] = {
 	SR_KHZ(200),
 	SR_KHZ(250),
 	SR_KHZ(500),
@@ -81,14 +81,14 @@ static const char *probe_names[NUM_PROBES + 1] = {
 	NULL,
 };
 
-static struct sr_samplerates samplerates = {
+static const struct sr_samplerates samplerates = {
 	0,
 	0,
 	0,
 	supported_samplerates,
 };
 
-static int hwcaps[] = {
+static const int hwcaps[] = {
 	SR_HWCAP_LOGIC_ANALYZER,
 	SR_HWCAP_SAMPLERATE,
 	SR_HWCAP_CAPTURE_RATIO,
@@ -633,11 +633,11 @@ static int set_samplerate(struct sr_dev_inst *sdi, uint64_t samplerate)
  * The Sigma supports complex triggers using boolean expressions, but this
  * has not been implemented yet.
  */
-static int configure_probes(struct sr_dev_inst *sdi, GSList *probes)
+static int configure_probes(struct sr_dev_inst *sdi, const GSList *probes)
 {
 	struct context *ctx = sdi->priv;
-	struct sr_probe *probe;
-	GSList *l;
+	const struct sr_probe *probe;
+	const GSList *l;
 	int trigger_set = 0;
 	int probebit;
 
@@ -753,11 +753,11 @@ static int hw_cleanup(void)
 	return ret;
 }
 
-static void *hw_dev_info_get(int dev_index, int dev_info_id)
+static const void *hw_dev_info_get(int dev_index, int dev_info_id)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
-	void *info = NULL;
+	const void *info = NULL;
 
 	if (!(sdi = sr_dev_inst_get(dev_insts, dev_index))) {
 		sr_err("sigma: %s: sdi was NULL", __func__);
@@ -801,12 +801,12 @@ static int hw_dev_status_get(int dev_index)
 		return SR_ST_NOT_FOUND;
 }
 
-static int *hw_hwcap_get_all(void)
+static const int *hw_hwcap_get_all(void)
 {
 	return hwcaps;
 }
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value)
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
@@ -818,17 +818,17 @@ static int hw_dev_config_set(int dev_index, int hwcap, void *value)
 	ctx = sdi->priv;
 
 	if (hwcap == SR_HWCAP_SAMPLERATE) {
-		ret = set_samplerate(sdi, *(uint64_t *)value);
+		ret = set_samplerate(sdi, *(const uint64_t *)value);
 	} else if (hwcap == SR_HWCAP_PROBECONFIG) {
 		ret = configure_probes(sdi, value);
 	} else if (hwcap == SR_HWCAP_LIMIT_MSEC) {
-		ctx->limit_msec = *(uint64_t *)value;
+		ctx->limit_msec = *(const uint64_t *)value;
 		if (ctx->limit_msec > 0)
 			ret = SR_OK;
 		else
 			ret = SR_ERR;
 	} else if (hwcap == SR_HWCAP_CAPTURE_RATIO) {
-		ctx->capture_ratio = *(uint64_t *)value;
+		ctx->capture_ratio = *(const uint64_t *)value;
 		if (ctx->capture_ratio < 0 || ctx->capture_ratio > 100)
 			ret = SR_ERR;
 		else
@@ -1265,6 +1265,7 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	struct context *ctx;
 	struct sr_datafeed_packet *packet;
 	struct sr_datafeed_header *header;
+	struct sr_datafeed_meta_logic meta;
 	struct clockselect_50 clockselect;
 	int frac, triggerpin, ret;
 	uint8_t triggerselect;
@@ -1366,17 +1367,23 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 		return SR_ERR_MALLOC;
 	}
 
-	/* Add capture source. */
-	sr_source_add(0, G_IO_IN, 10, receive_data, sdi);
-
 	/* Send header packet to the session bus. */
 	packet->type = SR_DF_HEADER;
 	packet->payload = header;
 	header->feed_version = 1;
 	gettimeofday(&header->starttime, NULL);
-	header->samplerate = ctx->cur_samplerate;
-	header->num_logic_probes = ctx->num_probes;
 	sr_session_send(ctx->session_dev_id, packet);
+
+	/* Send metadata about the SR_DF_LOGIC packets to come. */
+	packet->type = SR_DF_META_LOGIC;
+	packet->payload = &meta;
+	meta.samplerate = ctx->cur_samplerate;
+	meta.num_probes = ctx->num_probes;
+	sr_session_send(ctx->session_dev_id, packet);
+
+	/* Add capture source. */
+	sr_source_add(0, G_IO_IN, 10, receive_data, sdi);
+
 	g_free(header);
 	g_free(packet);
 

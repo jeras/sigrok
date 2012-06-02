@@ -46,7 +46,7 @@
 #define O_NONBLOCK FIONBIO
 #endif
 
-static int hwcaps[] = {
+static const int hwcaps[] = {
 	SR_HWCAP_LOGIC_ANALYZER,
 	SR_HWCAP_SAMPLERATE,
 	SR_HWCAP_CAPTURE_RATIO,
@@ -93,7 +93,7 @@ static const char *probe_names[NUM_PROBES + 1] = {
 };
 
 /* default supported samplerates, can be overridden by device metadata */
-static struct sr_samplerates samplerates = {
+static const struct sr_samplerates samplerates = {
 	SR_HZ(10),
 	SR_MHZ(200),
 	SR_HZ(1),
@@ -131,10 +131,10 @@ static int send_longcommand(int fd, uint8_t command, uint32_t data)
 	return SR_OK;
 }
 
-static int configure_probes(struct context *ctx, GSList *probes)
+static int configure_probes(struct context *ctx, const GSList *probes)
 {
-	struct sr_probe *probe;
-	GSList *l;
+	const struct sr_probe *probe;
+	const GSList *l;
 	int probe_bit, stage, i;
 	char *tc;
 
@@ -146,7 +146,7 @@ static int configure_probes(struct context *ctx, GSList *probes)
 
 	ctx->num_stages = 0;
 	for (l = probes; l; l = l->next) {
-		probe = (struct sr_probe *)l->data;
+		probe = (const struct sr_probe *)l->data;
 		if (!probe->enabled)
 			continue;
 
@@ -557,11 +557,11 @@ static int hw_cleanup(void)
 	return ret;
 }
 
-static void *hw_dev_info_get(int dev_index, int dev_info_id)
+static const void *hw_dev_info_get(int dev_index, int dev_info_id)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
-	void *info;
+	const void *info;
 
 	if (!(sdi = sr_dev_inst_get(dev_insts, dev_index)))
 		return NULL;
@@ -602,7 +602,7 @@ static int hw_dev_status_get(int dev_index)
 	return sdi->status;
 }
 
-static int *hw_hwcap_get_all(void)
+static const int *hw_hwcap_get_all(void)
 {
 	return hwcaps;
 }
@@ -639,12 +639,12 @@ static int set_samplerate(struct sr_dev_inst *sdi, uint64_t samplerate)
 	return SR_OK;
 }
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value)
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
 	int ret;
-	uint64_t *tmp_u64;
+	const uint64_t *tmp_u64;
 
 	if (!(sdi = sr_dev_inst_get(dev_insts, dev_index)))
 		return SR_ERR;
@@ -655,10 +655,10 @@ static int hw_dev_config_set(int dev_index, int hwcap, void *value)
 
 	switch (hwcap) {
 	case SR_HWCAP_SAMPLERATE:
-		ret = set_samplerate(sdi, *(uint64_t *)value);
+		ret = set_samplerate(sdi, *(const uint64_t *)value);
 		break;
 	case SR_HWCAP_PROBECONFIG:
-		ret = configure_probes(ctx, (GSList *)value);
+		ret = configure_probes(ctx, (const GSList *)value);
 		break;
 	case SR_HWCAP_LIMIT_SAMPLES:
 		tmp_u64 = value;
@@ -671,7 +671,7 @@ static int hw_dev_config_set(int dev_index, int hwcap, void *value)
 		ret = SR_OK;
 		break;
 	case SR_HWCAP_CAPTURE_RATIO:
-		ctx->capture_ratio = *(uint64_t *)value;
+		ctx->capture_ratio = *(const uint64_t *)value;
 		if (ctx->capture_ratio < 0 || ctx->capture_ratio > 100) {
 			ctx->capture_ratio = 0;
 			ret = SR_ERR;
@@ -876,6 +876,7 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 {
 	struct sr_datafeed_packet *packet;
 	struct sr_datafeed_header *header;
+	struct sr_datafeed_meta_logic meta;
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
 	uint32_t trigger_config[4];
@@ -1015,8 +1016,13 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	packet->payload = (unsigned char *)header;
 	header->feed_version = 1;
 	gettimeofday(&header->starttime, NULL);
-	header->samplerate = ctx->cur_samplerate;
-	header->num_logic_probes = NUM_PROBES;
+	sr_session_send(cb_data, packet);
+
+	/* Send metadata about the SR_DF_LOGIC packets to come. */
+	packet->type = SR_DF_META_LOGIC;
+	packet->payload = &meta;
+	meta.samplerate = ctx->cur_samplerate;
+	meta.num_probes = NUM_PROBES;
 	sr_session_send(cb_data, packet);
 
 	g_free(header);

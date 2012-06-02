@@ -137,11 +137,11 @@ static void dev_set_options(GtkAction *action, GtkWindow *parent)
 					G_TYPE_BOOLEAN, G_TYPE_STRING,
 					G_TYPE_BOOLEAN);
 	gtk_tree_view_set_model(GTK_TREE_VIEW(tv), GTK_TREE_MODEL(props));
-	int *hwcaps = dev->driver->hwcap_get_all();
+	const int *hwcaps = dev->driver->hwcap_get_all();
 	int cap;
 	GtkTreeIter iter;
 	for (cap = 0; hwcaps[cap]; cap++) {
-		struct sr_hwcap_option *hwo;
+		const struct sr_hwcap_option *hwo;
 		if (!(hwo = sr_hw_hwcap_get(hwcaps[cap])))
 			continue;
 		gtk_list_store_append(props, &iter);
@@ -493,7 +493,7 @@ static const GtkActionEntry action_items[] = {
 		NULL, G_CALLBACK(zoom_fit)},
 
 	{"HelpMenu", NULL, "_Help", NULL, NULL, NULL},
-	{"HelpWiki", GTK_STOCK_ABOUT, "Sigrok _Wiki", NULL, NULL,
+	{"HelpWiki", GTK_STOCK_ABOUT, "sigrok _Wiki", NULL, NULL,
 		G_CALLBACK(help_wiki)},
 	{"HelpAbout", GTK_STOCK_ABOUT, "_About", NULL, NULL,
 		G_CALLBACK(help_about)},

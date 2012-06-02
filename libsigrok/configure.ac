@@ -22,7 +22,7 @@ AC_PREREQ([2.63])
 
 # libsigrok package version number (NOT the same as shared lib version!).
 m4_define([sr_package_version_major], [0])
-m4_define([sr_package_version_minor], [1])
+m4_define([sr_package_version_minor], [2])
 m4_define([sr_package_version_micro], [0])
 m4_define([sr_package_version], [sr_package_version_major.sr_package_version_minor.sr_package_version_micro])
 
@@ -63,7 +63,7 @@ PKG_PROG_PKG_CONFIG([0.22])
 # Carefully read the libtool docs before updating these numbers!
 # The algorithm for determining which number to change (and how) is nontrivial!
 # http://www.gnu.org/software/libtool/manual/libtool.html#Updating-version-info
-SR_LIB_VERSION_CURRENT=0
+SR_LIB_VERSION_CURRENT=1
 SR_LIB_VERSION_REVISION=0
 SR_LIB_VERSION_AGE=0
 SR_LIB_VERSION="$SR_LIB_VERSION_CURRENT:$SR_LIB_VERSION_REVISION:$SR_LIB_VERSION_AGE"
@@ -144,12 +144,22 @@ fi
 
 AC_ARG_ENABLE(zeroplus-logic-cube,
 	      AC_HELP_STRING([--enable-zeroplus-logic-cube],
-	      [enable Zeroplus Logic Cube support [default=yes]]),
+	      [enable ZEROPLUS Logic Cube support [default=yes]]),
 	      [LA_ZEROPLUS_LOGIC_CUBE="$enableval"],
 	      [LA_ZEROPLUS_LOGIC_CUBE=yes])
 AM_CONDITIONAL(LA_ZEROPLUS_LOGIC_CUBE, test x$LA_ZEROPLUS_LOGIC_CUBE = xyes)
 if test "x$LA_ZEROPLUS_LOGIC_CUBE" = "xyes"; then
-	AC_DEFINE(HAVE_LA_ZEROPLUS_LOGIC_CUBE, 1, [Zeroplus Logic Cube support])
+	AC_DEFINE(HAVE_LA_ZEROPLUS_LOGIC_CUBE, 1, [ZEROPLUS Logic Cube support])
+fi
+
+AC_ARG_ENABLE(hantek-dso,
+	      AC_HELP_STRING([--enable-hantek-dso],
+	      [enable Hantek DSO support [default=yes]]),
+	      [HW_HANTEK_DSO="$enableval"],
+	      [HW_HANTEK_DSO=yes])
+AM_CONDITIONAL(HW_HANTEK_DSO, test x$HW_HANTEK_DSO = xyes)
+if test "x$HW_HANTEK_DSO" = "xyes"; then
+	AC_DEFINE(HAVE_HW_HANTEK_DSO, 1, [Hantek DSO support])
 fi
 
 # Checks for libraries.
@@ -239,7 +249,7 @@ AC_TYPE_SIZE_T
 # Checks for library functions.
 AC_CHECK_FUNCS([gettimeofday memset strchr strcspn strdup strerror strncasecmp strstr strtol strtoul strtoull])
 
-AC_SUBST(FIRMWARE_DIR, "$datadir/libsigrok/firmware")
+AC_SUBST(FIRMWARE_DIR, "$datadir/sigrok-firmware")
 AC_SUBST(MAKEFLAGS, '--no-print-directory')
 AC_SUBST(AM_LIBTOOLFLAGS, '--silent')
 
@@ -255,7 +265,6 @@ AC_SUBST(SR_PACKAGE_VERSION)
 
 AC_CONFIG_FILES([Makefile
 		 sigrok.h
-		 firmware/Makefile
 		 hardware/Makefile
 		 hardware/alsa/Makefile
 		 hardware/asix-sigma/Makefile
@@ -266,6 +275,7 @@ AC_CONFIG_FILES([Makefile
 		 hardware/link-mso19/Makefile
 		 hardware/openbench-logic-sniffer/Makefile
 		 hardware/zeroplus-logic-cube/Makefile
+		 hardware/hantek-dso/Makefile
 		 input/Makefile
 		 output/Makefile
 		 output/text/Makefile
@@ -305,6 +315,7 @@ echo "  - Demo driver..................... $LA_DEMO"
 echo "  - fx2lafw (for FX2 LAs)........... $LA_FX2LAFW"
 echo "  - Link MSO-19..................... $LA_LINK_MSO19"
 echo "  - Openbench Logic Sniffer......... $LA_OLS"
-echo "  - Zeroplus Logic Cube............. $LA_ZEROPLUS_LOGIC_CUBE"
+echo "  - ZEROPLUS Logic Cube............. $LA_ZEROPLUS_LOGIC_CUBE"
+echo "  - Hantek DSO...................... $HW_HANTEK_DSO"
 echo
 

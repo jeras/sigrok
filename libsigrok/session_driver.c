@@ -41,7 +41,7 @@ struct session_vdev {
 
 static char *sessionfile = NULL;
 static GSList *dev_insts = NULL;
-static int hwcaps[] = {
+static const int hwcaps[] = {
 	SR_HWCAP_CAPTUREFILE,
 	SR_HWCAP_CAPTURE_UNITSIZE,
 	0,
@@ -193,7 +193,7 @@ static int hw_dev_open(int dev_index)
 	return SR_OK;
 }
 
-static void *hw_dev_info_get(int dev_index, int dev_info_id)
+static const void *hw_dev_info_get(int dev_index, int dev_info_id)
 {
 	struct session_vdev *vdev;
 	void *info;
@@ -226,15 +226,15 @@ static int hw_dev_status_get(int dev_index)
  * @return A pointer to the (hardware) capabilities of this virtual session
  *         driver. This could be NULL, if no such capabilities exist.
  */
-static int *hw_hwcap_get_all(void)
+static const int *hw_hwcap_get_all(void)
 {
 	return hwcaps;
 }
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value)
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value)
 {
 	struct session_vdev *vdev;
-	uint64_t *tmp_u64;
+	const uint64_t *tmp_u64;
 
 	if (!(vdev = get_vdev_by_index(dev_index)))
 		return SR_ERR;
@@ -274,6 +274,7 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	struct session_vdev *vdev;
 	struct sr_datafeed_header *header;
 	struct sr_datafeed_packet *packet;
+	struct sr_datafeed_meta_logic meta;
 	int ret;
 
 	if (!(vdev = get_vdev_by_index(dev_index)))
@@ -318,9 +319,15 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	packet->payload = (unsigned char *)header;
 	header->feed_version = 1;
 	gettimeofday(&header->starttime, NULL);
-	header->samplerate = vdev->samplerate;
-	header->num_logic_probes = vdev->num_probes;
 	sr_session_send(cb_data, packet);
+
+	/* Send metadata about the SR_DF_LOGIC packets to come. */
+	packet->type = SR_DF_META_LOGIC;
+	packet->payload = &meta;
+	meta.samplerate = vdev->samplerate;
+	meta.num_probes = vdev->num_probes;
+	sr_session_send(cb_data, packet);
+
 	g_free(header);
 	g_free(packet);
 

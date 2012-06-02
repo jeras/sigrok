@@ -36,6 +36,15 @@ SR_API struct sr_hwcap_option sr_hwcap_options[] = {
 	{SR_HWCAP_CAPTURE_RATIO, SR_T_UINT64, "Pre-trigger capture ratio", "captureratio"},
 	{SR_HWCAP_PATTERN_MODE, SR_T_CHAR, "Pattern generator mode", "pattern"},
 	{SR_HWCAP_RLE, SR_T_BOOL, "Run Length Encoding", "rle"},
+	{SR_HWCAP_TRIGGER_SLOPE, SR_T_UINT64, "Trigger slope", "triggerslope"},
+	{SR_HWCAP_TRIGGER_SOURCE, SR_T_CHAR, "Trigger source", "triggersource"},
+	{SR_HWCAP_HORIZ_TRIGGERPOS, SR_T_FLOAT, "Horizontal trigger position",
+			"horiz_triggerpos"},
+	{SR_HWCAP_BUFFERSIZE, SR_T_UINT64, "Buffer size", "buffersize"},
+	{SR_HWCAP_TIMEBASE, SR_T_RATIONAL_PERIOD, "Time base", "timebase"},
+	{SR_HWCAP_FILTER, SR_T_CHAR, "Filter targets", "filter"},
+	{SR_HWCAP_VDIV, SR_T_RATIONAL_VOLT, "Volts/div", "vdiv"},
+	{SR_HWCAP_COUPLING, SR_T_CHAR, "Coupling", "coupling"},
 	{0, 0, NULL, NULL},
 };
 
@@ -63,6 +72,9 @@ extern SR_PRIV struct sr_dev_driver alsa_driver_info;
 #ifdef HAVE_LA_FX2LAFW
 extern SR_PRIV struct sr_dev_driver fx2lafw_driver_info;
 #endif
+#ifdef HAVE_HW_HANTEK_DSO
+extern SR_PRIV struct sr_dev_driver hantek_dso_driver_info;
+#endif
 
 static struct sr_dev_driver *drivers_list[] = {
 #ifdef HAVE_LA_DEMO
@@ -88,6 +100,9 @@ static struct sr_dev_driver *drivers_list[] = {
 #endif
 #ifdef HAVE_LA_FX2LAFW
 	&fx2lafw_driver_info,
+#endif
+#ifdef HAVE_HW_HANTEK_DSO
+	&hantek_dso_driver_info,
 #endif
 	NULL,
 };
@@ -261,7 +276,8 @@ SR_PRIV void sr_serial_dev_inst_free(struct sr_serial_dev_inst *serial)
  */
 SR_API gboolean sr_driver_hwcap_exists(struct sr_dev_driver *driver, int hwcap)
 {
-	int *hwcaps, i;
+	const int *hwcaps;
+	int i;
 
 	if (!driver) {
 		sr_err("hwdriver: %s: driver was NULL", __func__);
@@ -289,7 +305,7 @@ SR_API gboolean sr_driver_hwcap_exists(struct sr_dev_driver *driver, int hwcap)
  * @return A pointer to a struct with information about the parameter, or NULL
  *         if the capability was not found.
  */
-SR_API struct sr_hwcap_option *sr_hw_hwcap_get(int hwcap)
+SR_API const struct sr_hwcap_option *sr_hw_hwcap_get(int hwcap)
 {
 	int i;
 

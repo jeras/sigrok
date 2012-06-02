@@ -76,7 +76,7 @@ struct context {
 	GTimer *timer;
 };
 
-static int hwcaps[] = {
+static const int hwcaps[] = {
 	SR_HWCAP_LOGIC_ANALYZER,
 	SR_HWCAP_DEMO_DEV,
 	SR_HWCAP_SAMPLERATE,
@@ -86,7 +86,7 @@ static int hwcaps[] = {
 	SR_HWCAP_CONTINUOUS,
 };
 
-static struct sr_samplerates samplerates = {
+static const struct sr_samplerates samplerates = {
 	SR_HZ(1),
 	SR_GHZ(1),
 	SR_HZ(1),
@@ -184,10 +184,10 @@ static int hw_cleanup(void)
 	return SR_OK;
 }
 
-static void *hw_dev_info_get(int dev_index, int dev_info_id)
+static const void *hw_dev_info_get(int dev_index, int dev_info_id)
 {
 	struct sr_dev_inst *sdi;
-	void *info = NULL;
+	const void *info = NULL;
 
 	if (!(sdi = sr_dev_inst_get(dev_insts, dev_index))) {
 		sr_err("demo: %s: sdi was NULL", __func__);
@@ -226,15 +226,15 @@ static int hw_dev_status_get(int dev_index)
 	return SR_ST_ACTIVE;
 }
 
-static int *hw_hwcap_get_all(void)
+static const int *hw_hwcap_get_all(void)
 {
 	return hwcaps;
 }
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value)
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value)
 {
 	int ret;
-	char *stropt;
+	const char *stropt;
 
 	/* Avoid compiler warnings. */
 	(void)dev_index;
@@ -243,17 +243,17 @@ static int hw_dev_config_set(int dev_index, int hwcap, void *value)
 		/* Nothing to do, but must be supported */
 		ret = SR_OK;
 	} else if (hwcap == SR_HWCAP_SAMPLERATE) {
-		cur_samplerate = *(uint64_t *)value;
+		cur_samplerate = *(const uint64_t *)value;
 		sr_dbg("demo: %s: setting samplerate to %" PRIu64, __func__,
 		       cur_samplerate);
 		ret = SR_OK;
 	} else if (hwcap == SR_HWCAP_LIMIT_SAMPLES) {
-		limit_samples = *(uint64_t *)value;
+		limit_samples = *(const uint64_t *)value;
 		sr_dbg("demo: %s: setting limit_samples to %" PRIu64, __func__,
 		       limit_samples);
 		ret = SR_OK;
 	} else if (hwcap == SR_HWCAP_LIMIT_MSEC) {
-		limit_msec = *(uint64_t *)value;
+		limit_msec = *(const uint64_t *)value;
 		sr_dbg("demo: %s: setting limit_msec to %" PRIu64, __func__,
 		       limit_msec);
 		ret = SR_OK;
@@ -414,6 +414,7 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 {
 	struct sr_datafeed_packet *packet;
 	struct sr_datafeed_header *header;
+	struct sr_datafeed_meta_logic meta;
 	struct context *ctx;
 
 	/* TODO: 'ctx' is never g_free()'d? */
@@ -473,9 +474,15 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	packet->payload = header;
 	header->feed_version = 1;
 	gettimeofday(&header->starttime, NULL);
-	header->samplerate = cur_samplerate;
-	header->num_logic_probes = NUM_PROBES;
 	sr_session_send(ctx->session_dev_id, packet);
+
+	/* Send metadata about the SR_DF_LOGIC packets to come. */
+	packet->type = SR_DF_META_LOGIC;
+	packet->payload = &meta;
+	meta.samplerate = cur_samplerate;
+	meta.num_probes = NUM_PROBES;
+	sr_session_send(ctx->session_dev_id, packet);
+
 	g_free(header);
 	g_free(packet);
 

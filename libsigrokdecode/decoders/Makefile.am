@@ -32,11 +32,11 @@ SUBDIRS = \
 	mlx90614 \
 	mx25lxx05d \
 	mxc6225xu \
+	nunchuk \
 	pan1321 \
 	rtc8564 \
 	spi \
 	transitioncounter \
 	uart \
-	usb \
-	onewire
+	usb
 

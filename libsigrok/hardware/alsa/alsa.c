@@ -42,7 +42,7 @@ struct sr_analog_sample {
 	struct sr_analog_probe probes[];
 };
 
-static int hwcaps[] = {
+static const int hwcaps[] = {
 	SR_HWCAP_SAMPLERATE,
 	SR_HWCAP_LIMIT_SAMPLES,
 	SR_HWCAP_CONTINUOUS,
@@ -168,7 +168,7 @@ static int hw_cleanup(void)
 	return SR_OK;
 }
 
-static void *hw_dev_info_get(int dev_index, int dev_info_id)
+static const void *hw_dev_info_get(int dev_index, int dev_info_id)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
@@ -207,12 +207,12 @@ static int hw_dev_status_get(int dev_index)
 	return SR_ST_ACTIVE;
 }
 
-static int *hw_hwcap_get_all(void)
+static const int *hw_hwcap_get_all(void)
 {
 	return hwcaps;
 }
 
-static int hw_dev_config_set(int dev_index, int hwcap, void *value)
+static int hw_dev_config_set(int dev_index, int hwcap, const void *value)
 {
 	struct sr_dev_inst *sdi;
 	struct context *ctx;
@@ -225,10 +225,10 @@ static int hw_dev_config_set(int dev_index, int hwcap, void *value)
 	case SR_HWCAP_PROBECONFIG:
 		return SR_OK;
 	case SR_HWCAP_SAMPLERATE:
-		ctx->cur_rate = *(uint64_t *)value;
+		ctx->cur_rate = *(const uint64_t *)value;
 		return SR_OK;
 	case SR_HWCAP_LIMIT_SAMPLES:
-		ctx->limit_samples = *(uint64_t *)value;
+		ctx->limit_samples = *(const uint64_t *)value;
 		return SR_OK;
 	default:
 		return SR_ERR;

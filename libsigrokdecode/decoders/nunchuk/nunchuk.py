@@ -32,16 +32,20 @@ class Decoder(srd.Decoder):
     inputs = ['i2c']
     outputs = ['nunchuck']
     probes = []
-    optional_probes = [] # TODO
+    optional_probes = []
     options = {}
     annotations = [
+        ['Text (verbose)', 'Human-readable text (verbose)'],
         ['Text', 'Human-readable text'],
+        ['Warnings', 'Human-readable warnings'],
     ]
 
     def __init__(self, **kwargs):
-        self.state = 'IDLE' # TODO: Can we assume a certain initial state?
-        self.sx = self.sy = self.ax = self.ay = self.az = self.bz = self.bc = 0
+        self.state = 'IDLE'
+        self.sx = self.sy = self.ax = self.ay = self.az = self.bz = self.bc = -1
         self.databytecount = 0
+        self.reg = 0x00
+        self.init_seq = []
 
     def start(self, metadata):
         # self.out_proto = self.add(srd.OUTPUT_PROTO, 'nunchuk')
@@ -50,79 +54,153 @@ class Decoder(srd.Decoder):
     def report(self):
         pass
 
-    def decode(self, ss, es, data):
+    def putx(self, data):
+        # Helper for annotations which span exactly one I2C packet.
+        self.put(self.ss, self.es, self.out_ann, data)
 
-        cmd, databyte = data
+    def putb(self, data):
+        # Helper for annotations which span a block of I2C packets.
+        self.put(self.block_start_sample, self.block_end_sample,
+                 self.out_ann, data)
 
-        if cmd == 'START': # TODO: Handle 'Sr' here, too?
-            self.state = 'START'
+    def handle_reg_0x00(self, databyte):
+        self.sx = databyte
+        self.putx([0, ['Analog stick X position: 0x%02x' % self.sx]])
+        self.putx([1, ['SX: 0x%02x' % self.sx]])
 
-        elif cmd == 'START REPEAT':
-            pass # FIXME
+    def handle_reg_0x01(self, databyte):
+        self.sy = databyte
+        self.putx([0, ['Analog stick Y position: 0x%02x' % self.sy]])
+        self.putx([1, ['SY: 0x%02x' % self.sy]])
 
-        elif cmd == 'ADDRESS READ':
-            # TODO: Error/Warning, not supported, I think.
-            pass
+    def handle_reg_0x02(self, databyte):
+        self.ax = databyte << 2
+        self.putx([0, ['Accelerometer X value bits[9:2]: 0x%03x' % self.ax]])
+        self.putx([1, ['AX[9:2]: 0x%03x' % self.ax]])
 
-        elif cmd == 'ADDRESS WRITE':
-            # The Wii Nunchuk always has slave address 0x54.
-            # TODO: Handle this stuff more correctly.
-            if databyte == 0x54:
-                pass # TODO
-            else:
-                pass # TODO: What to do here? Ignore? Error?
+    def handle_reg_0x03(self, databyte):
+        self.ay = databyte << 2
+        self.putx([0, ['Accelerometer Y value bits[9:2]: 0x%03x' % self.ay]])
+        self.putx([1, ['AY[9:2]: 0x%x' % self.ay]])
 
-        elif cmd == 'DATA READ' and self.state == 'INITIALIZED':
-            if self.databytecount == 0:
-                self.sx = databyte
-            elif self.databytecount == 1:
-                self.sy = databyte
-            elif self.databytecount == 2:
-                self.ax = databyte << 2
-            elif self.databytecount == 3:
-                self.ay = databyte << 2
-            elif self.databytecount == 4:
-                self.az = databyte << 2
-            elif self.databytecount == 5:
-                self.bz =  (databyte & (1 << 0)) >> 0
-                self.bc =  (databyte & (1 << 1)) >> 1
-                self.ax |= (databyte & (3 << 2)) >> 2
-                self.ay |= (databyte & (3 << 4)) >> 4
-                self.az |= (databyte & (3 << 6)) >> 6
+    def handle_reg_0x04(self, databyte):
+        self.az = databyte << 2
+        self.putx([0, ['Accelerometer Z value bits[9:2]: 0x%03x' % self.az]])
+        self.putx([1, ['AZ[9:2]: 0x%x' % self.az]])
 
-                d = 'sx = 0x%02x, sy = 0x%02x, ax = 0x%02x, ay = 0x%02x, ' \
-                    'az = 0x%02x, bz = 0x%02x, bc = 0x%02x' % (self.sx, \
-                    self.sy, self.ax, self.ay, self.az, self.bz, self.bc)
-                self.put(ss, es, self.out_ann, [0, [d]])
+    # TODO: Bit-exact annotations.
+    def handle_reg_0x05(self, databyte):
+        self.bz = (databyte & (1 << 0)) >> 0 # Bits[0:0]
+        self.bc = (databyte & (1 << 1)) >> 1 # Bits[1:1]
+        ax_rest = (databyte & (3 << 2)) >> 2 # Bits[3:2]
+        ay_rest = (databyte & (3 << 4)) >> 4 # Bits[5:4]
+        az_rest = (databyte & (3 << 6)) >> 6 # Bits[7:6]
+        self.ax |= ax_rest
+        self.ay |= ay_rest
+        self.az |= az_rest
 
-                self.sx = self.sy = self.ax = self.ay = self.az = 0
-                self.bz = self.bc = 0
-            else:
-                pass # TODO
+        s = '' if (self.bz == 0) else 'not '
+        self.putx([0, ['Z button: %spressed' % s]])
+        self.putx([1, ['BZ: %d' % self.bz]])
 
-            if 0 <= self.databytecount <= 5:
-                self.databytecount += 1
+        s = '' if (self.bc == 0) else 'not '
+        self.putx([0, ['C button: %spressed' % s]])
+        self.putx([1, ['BC: %d' % self.bc]])
 
-            # TODO: If 6 bytes read -> save and reset
+        self.putx([0, ['Accelerometer X value bits[1:0]: 0x%x' % ax_rest]])
+        self.putx([1, ['AX[1:0]: 0x%x' % ax_rest]])
 
-        # TODO
-        elif cmd == 'DATA READ' and self.state != 'INITIALIZED':
-            pass
+        self.putx([0, ['Accelerometer Y value bits[1:0]: 0x%x' % ay_rest]])
+        self.putx([1, ['AY[1:0]: 0x%x' % ay_rest]])
 
-        elif cmd == 'DATA WRITE':
-            if self.state == 'IDLE':
-                self.state = 'INITIALIZED'
+        self.putx([0, ['Accelerometer Z value bits[1:0]: 0x%x' % az_rest]])
+        self.putx([1, ['AZ[1:0]: 0x%x' % az_rest]])
+
+    def output_full_block_if_possible(self):
+        # For now, only output summary annotation if all values are available.
+        t = (self.sx, self.sy, self.ax, self.ay, self.az, self.bz, self.bc)
+        if -1 in t:
             return
 
-            if databyte == 0x40 and self.state == 'START':
-                self.state = 'INIT'
-            elif databyte == 0x00 and self.state == 'INIT':
-                self.put(ss, es, self.out_ann, [0, ['Initialize nunchuk']])
-                self.state = 'INITIALIZED'
-            else:
-                pass # TODO
+        s = 'Analog stick X position: 0x%02x\n' % self.sx
+        s += 'Analog stick Y position: 0x%02x\n' % self.sy
+        s += 'Z button: %spressed\n' % ('' if (self.bz == 0) else 'not ')
+        s += 'C button: %spressed\n' % ('' if (self.bc == 0) else 'not ')
+        s += 'Accelerometer X value: 0x%03x\n' % self.ax
+        s += 'Accelerometer Y value: 0x%03x\n' % self.ay
+        s += 'Accelerometer Z value: 0x%03x\n' % self.az
+        self.put(self.block_start_sample, self.block_end_sample,
+                 self.out_ann, [0, [s]])
 
-        elif cmd == 'STOP':
-            self.state = 'INITIALIZED'
-            self.databytecount = 0
+        s = 'SX = 0x%02x, SY = 0x%02x, AX = 0x%02x, AY = 0x%02x, ' \
+            'AZ = 0x%02x, BZ = 0x%02x, BC = 0x%02x' % (self.sx, \
+            self.sy, self.ax, self.ay, self.az, self.bz, self.bc)
+        self.put(self.block_start_sample, self.block_end_sample,
+                 self.out_ann, [1, [s]])
+
+    def handle_reg_write(self, databyte):
+        self.putx([0, ['Nunchuk write: 0x%02x' % databyte]])
+        if len(self.init_seq) < 2:
+            self.init_seq.append(databyte)
+
+    def output_init_seq(self):
+        if len(self.init_seq) != 2:
+            self.putb([2, ['Init sequence was %d bytes long (2 expected)' % \
+                      len(self.init_seq)]])
+
+        if self.init_seq != (0x40, 0x00):
+            self.putb([2, ['Unknown init sequence (expected: 0x40 0x00)']])
+
+        # TODO: Detect Nunchuk clones (they have different init sequences).
+        s = 'Initialized Nintendo Wii Nunchuk'
+
+        self.putb([0, [s]])
+        self.putb([1, ['INIT']])
+
+    def decode(self, ss, es, data):
+        cmd, databyte = data
+
+        # Store the start/end samples of this I2C packet.
+        self.ss, self.es = ss, es
+
+        # State machine.
+        if self.state == 'IDLE':
+            # Wait for an I2C START condition.
+            if cmd != 'START':
+                return
+            self.state = 'GET SLAVE ADDR'
+            self.block_start_sample = ss
+        elif self.state == 'GET SLAVE ADDR':
+            # Wait for an address read/write operation.
+            if cmd == 'ADDRESS READ':
+                self.state = 'READ REGS'
+            elif cmd == 'ADDRESS WRITE':
+                self.state = 'WRITE REGS'
+        elif self.state == 'READ REGS':
+            if cmd == 'DATA READ':
+                handle_reg = getattr(self, 'handle_reg_0x%02x' % self.reg)
+                handle_reg(databyte)
+                self.reg += 1
+            elif cmd == 'STOP':
+                self.block_end_sample = es
+                self.output_full_block_if_possible()
+                self.sx = self.sy = self.ax = self.ay = self.az = -1
+                self.bz = self.bc = -1
+                self.state = 'IDLE'
+            else:
+                # self.putx([0, ['Ignoring: %s (data=%s)' % (cmd, databyte)]])
+                pass
+        elif self.state == 'WRITE REGS':
+            if cmd == 'DATA WRITE':
+                self.handle_reg_write(databyte)
+            elif cmd == 'STOP':
+                self.block_end_sample = es
+                self.output_init_seq()
+                self.init_seq = []
+                self.state = 'IDLE'
+            else:
+                # self.putx([0, ['Ignoring: %s (data=%s)' % (cmd, databyte)]])
+                pass
+        else:
+            raise Exception('Invalid state: %s' % self.state)
 
