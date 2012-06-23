@@ -39,5 +39,8 @@ SUBDIRS = \
 	transitioncounter \
 	uart \
 	usb \
+	uart_dump \
+	usb \
+	usb_signalling \
+	usb_protocol \
         onewire
-

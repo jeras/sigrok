@@ -1,7 +1,7 @@
 ##
 ## This file is part of the sigrok project.
 ##
-## Copyright (C) 2012 Bert Vermeulen <bert@biot.com>
+## Copyright (C) 2012 Uwe Hermann <uwe@hermann-uwe.de>
 ##
 ## This program is free software; you can redistribute it and/or modify
 ## it under the terms of the GNU General Public License as published by
@@ -18,23 +18,15 @@
 ## Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 ##
 
-'''
-EDID 1.3 structure decoder.
+if HW_MASTECH_VA18B
 
-The three-character vendor ID as specified in the EDID standard refers to
-a Plug and Play ID (PNPID). The list of PNPID assignments is done by Microsoft.
-More information is available on this page:
+# Local lib, this is NOT meant to be installed!
+noinst_LTLIBRARIES = libsigrokhw_mastech_va18b.la
 
- http://msdn.microsoft.com/en-us/windows/hardware/gg463195
+libsigrokhw_mastech_va18b_la_SOURCES = \
+	api.c
 
-The 'pnpids.txt' file included with this protocol decoder is derived from
-the list of assignments downloadable from that page. It was retrieved in
-January 2012.
+libsigrokhw_mastech_va18b_la_CFLAGS = \
+	-I$(top_srcdir)
 
-More information on EDID is available here:
-
- https://en.wikipedia.org/wiki/Extended_display_identification_data
-'''
-
-from .edid import *
-
+endif

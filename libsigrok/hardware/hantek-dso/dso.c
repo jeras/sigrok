@@ -26,7 +26,6 @@
 #include <string.h>
 #include <glib.h>
 #include <libusb.h>
-#include <arpa/inet.h>
 
 extern libusb_context *usb_context;
 extern GSList *dev_insts;
@@ -223,8 +222,8 @@ static int get_channel_offsets(struct context *ctx)
 	 */
 	for (chan = 0; chan < 2; chan++) {
 		for (v = 0; v < 9; v++) {
-			ctx->channel_levels[chan][v][0] = ntohs(ctx->channel_levels[chan][v][0]);
-			ctx->channel_levels[chan][v][1] = ntohs(ctx->channel_levels[chan][v][1]);
+			ctx->channel_levels[chan][v][0] = g_ntohs(ctx->channel_levels[chan][v][0]);
+			ctx->channel_levels[chan][v][1] = g_ntohs(ctx->channel_levels[chan][v][1]);
 		}
 	}
 
@@ -469,29 +468,27 @@ SR_PRIV int dso_set_voltage(struct context *ctx)
 
 SR_PRIV int dso_set_relays(struct context *ctx)
 {
-	int ret, cv1, cv2;
-	uint8_t relays[] = { 0x00, 0x04, 0x08, 0x02, 0x20, 0x40, 0x10, 0x01,
+	GString *gs;
+	int ret, i;
+	uint8_t relays[17] = { 0x00, 0x04, 0x08, 0x02, 0x20, 0x40, 0x10, 0x01,
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
 	sr_dbg("hantek-dso: preparing CTRL_SETRELAYS");
 
-	cv1 = ctx->voltage_ch1 / 3;
-	cv2 = ctx->voltage_ch2 / 3;
-
-	if (cv1 > 0)
+	if (ctx->voltage_ch1 < VDIV_1V)
 		relays[1] = ~relays[1];
 
-	if (cv1 > 1)
+	if (ctx->voltage_ch1 < VDIV_100MV)
 		relays[2] = ~relays[2];
 
 	sr_dbg("hantek-dso: CH1 coupling %d", ctx->coupling_ch1);
 	if (ctx->coupling_ch1 != COUPLING_AC)
 		relays[3] = ~relays[3];
 
-	if (cv2 > 0)
+	if (ctx->voltage_ch2 < VDIV_1V)
 		relays[4] = ~relays[4];
 
-	if (cv2 > 1)
+	if (ctx->voltage_ch2 < VDIV_100MV)
 		relays[5] = ~relays[5];
 
 	sr_dbg("hantek-dso: CH2 coupling %d", ctx->coupling_ch1);
@@ -501,9 +498,18 @@ SR_PRIV int dso_set_relays(struct context *ctx)
 	if (!strcmp(ctx->triggersource, "EXT"))
 		relays[7] = ~relays[7];
 
+	if (sr_log_loglevel_get() >= SR_LOG_DBG) {
+		gs = g_string_sized_new(128);
+		g_string_printf(gs, "hantek-dso: relays:");
+		for (i = 0; i < 17; i++)
+			g_string_append_printf(gs, " %.2x", relays[i]);
+		sr_dbg(gs->str);
+		g_string_free(gs, TRUE);
+	}
+
 	if ((ret = libusb_control_transfer(ctx->usb->devhdl,
 			LIBUSB_REQUEST_TYPE_VENDOR, CTRL_SETRELAYS,
-			0, 0, relays, sizeof(relays), 100)) != sizeof(relays)) {
+			0, 0, relays, 17, 100)) != sizeof(relays)) {
 		sr_err("failed to set relays: %d", ret);
 		return SR_ERR;
 	}
@@ -634,7 +640,8 @@ SR_PRIV int dso_init(struct context *ctx)
 	return SR_OK;
 }
 
-SR_PRIV uint8_t dso_get_capturestate(struct context *ctx)
+SR_PRIV int dso_get_capturestate(struct context *ctx, uint8_t *capturestate,
+		uint32_t *trigger_offset)
 {
 	int ret, tmp;
 	uint8_t cmdstring[2], inbuf[512];
@@ -646,20 +653,22 @@ SR_PRIV uint8_t dso_get_capturestate(struct context *ctx)
 
 	if ((ret = send_bulkcmd(ctx, cmdstring, sizeof(cmdstring))) != SR_OK) {
 		sr_dbg("Failed to send get_capturestate command: %d", ret);
-		return CAPTURE_UNKNOWN;
+		return SR_ERR;
 	}
 
 	if ((ret = libusb_bulk_transfer(ctx->usb->devhdl,
 			DSO_EP_IN | LIBUSB_ENDPOINT_IN,
 			inbuf, 512, &tmp, 100)) != 0) {
 		sr_dbg("Failed to get capturestate: %d", ret);
-		return CAPTURE_UNKNOWN;
+		return SR_ERR;
 	}
+	*capturestate = inbuf[0];
+	*trigger_offset = (inbuf[1] << 16) | (inbuf[3] << 8) | inbuf[2];
 
-	return inbuf[0];
+	return SR_OK;
 }
 
-SR_PRIV uint8_t dso_capture_start(struct context *ctx)
+SR_PRIV int dso_capture_start(struct context *ctx)
 {
 	int ret;
 	uint8_t cmdstring[2];

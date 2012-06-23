@@ -436,10 +436,9 @@ static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 	struct sr_datafeed_analog *analog;
 	struct sr_datafeed_meta_analog *meta_analog;
 	static int num_enabled_analog_probes = 0;
-	int num_enabled_probes, sample_size, data_offset, ret, i, j;
+	int num_enabled_probes, sample_size, ret, i;
 	uint64_t output_len, filter_out_len;
 	uint8_t *output_buf, *filter_out;
-	float asample;
 
 	/* If the first packet to come in isn't a header, don't even try. */
 	if (packet->type != SR_DF_HEADER && o == NULL)
@@ -473,7 +472,7 @@ static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 		}
 		if (o->format->event) {
 			o->format->event(o, SR_DF_END, &output_buf, &output_len);
-			if (output_len) {
+			if (output_buf) {
 				if (outfile)
 					fwrite(output_buf, 1, output_len, outfile);
 				g_free(output_buf);
@@ -582,7 +581,7 @@ static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 			output_len = 0;
 			if (o->format->data && packet->type == o->format->df_type)
 				o->format->data(o, filter_out, filter_out_len, &output_buf, &output_len);
-			if (output_len) {
+			if (output_buf) {
 				fwrite(output_buf, 1, output_len, outfile);
 				g_free(output_buf);
 			}
@@ -622,9 +621,6 @@ static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 				outfile = g_fopen(opt_output_file, "wb");
 			}
 		}
-//		if (opt_pds)
-//			srd_session_start(num_enabled_probes, unitsize,
-//					meta_logic->samplerate);
 		break;
 
 	case SR_DF_ANALOG:
@@ -636,33 +632,41 @@ static void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 		if (limit_samples && received_samples >= limit_samples)
 			break;
 
-		data_offset = 0;
-		for (i = 0; i < analog->num_samples; i++) {
-			for (j = 0; j < num_enabled_analog_probes; j++) {
-				asample = analog->data[data_offset++];
-				printf("%s: %f\n", analog_probelist[j]->name, asample);
+		if (o->format->data && packet->type == o->format->df_type) {
+			o->format->data(o, (const uint8_t *)analog->data,
+					analog->num_samples * sizeof(float),
+					&output_buf, &output_len);
+			if (output_buf) {
+				fwrite(output_buf, 1, output_len, outfile);
+				g_free(output_buf);
 			}
-//			asample1 = asample2 = 0.0;
-//			asample1 = analog->data[data_offset++];
-//			asample2 = analog->data[i * num_analog_probes + 1];
-//			printf("%d\t%f\t%f\n", received_samples+i+1, asample1, asample2);
 		}
-
-//		output_len = 0;
-//		if (o->format->data && packet->type == o->format->df_type)
-//			o->format->data(o, filter_out, filter_out_len, &output_buf, &output_len);
 
 		received_samples += analog->num_samples;
 		break;
 
 	case SR_DF_FRAME_BEGIN:
-		/* TODO */
-		printf("BEGIN\n");
+		g_debug("cli: received SR_DF_FRAME_BEGIN");
+		if (o->format->event) {
+			o->format->event(o, SR_DF_FRAME_BEGIN, &output_buf,
+					 &output_len);
+			if (output_buf) {
+				fwrite(output_buf, 1, output_len, outfile);
+				g_free(output_buf);
+			}
+		}
 		break;
 
 	case SR_DF_FRAME_END:
-		/* TODO */
-		printf("END\n");
+		g_debug("cli: received SR_DF_FRAME_END");
+		if (o->format->event) {
+			o->format->event(o, SR_DF_FRAME_END, &output_buf,
+					 &output_len);
+			if (output_buf) {
+				fwrite(output_buf, 1, output_len, outfile);
+				g_free(output_buf);
+			}
+		}
 		break;
 
 	default:
@@ -860,6 +864,7 @@ int setup_output_format(void)
 		 */
 		default_output_format = TRUE;
 	}
+
 	fmtargs = parse_generic_arg(opt_output_format);
 	fmtspec = g_hash_table_lookup(fmtargs, "sigrok_key");
 	if (!fmtspec) {
@@ -918,6 +923,7 @@ void show_pd_annotations(struct srd_proto_data *pdata, void *cb_data)
 	for (i = 0; annotations[i]; i++)
 		printf("\"%s\" ", annotations[i]);
 	printf("\n");
+	fflush(stdout);
 }
 
 static int select_probes(struct sr_dev *dev)

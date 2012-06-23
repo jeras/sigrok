@@ -39,11 +39,13 @@ class Decoder(srd.Decoder):
     optional_probes = []
     options = {}
     annotations = [
+        ['Text (verbose)', 'Human-readable text (verbose)'],
         ['Text', 'Human-readable text'],
     ]
 
     def __init__(self, **kwargs):
         self.cmd = ['', '']
+        self.ss_block = None
 
     def start(self, metadata):
         # self.out_proto = self.add(srd.OUTPUT_PROTO, 'pan1321')
@@ -52,34 +54,37 @@ class Decoder(srd.Decoder):
     def report(self):
         pass
 
-    def handle_host_command(self, ss, es, rxtx, s):
+    def putx(self, data):
+        self.put(self.ss_block, self.es_block, self.out_ann, data)
+
+    def handle_host_command(self, rxtx, s):
         if s.startswith('AT+JSEC'):
             pin = s[-4:]
-            self.put(ss, es, self.out_ann,
-                     [ANN_ASCII, ['Host set the Bluetooth PIN to ' + pin]])
+            self.putx([0, ['Host set the Bluetooth PIN to ' + pin]])
+            self.putx([1, ['PIN = ' + pin]])
         elif s.startswith('AT+JSLN'):
             name = s[s.find(',') + 1:]
-            self.put(ss, es, self.out_ann,
-                     [ANN_ASCII, ['Host set the Bluetooth name to ' + name]])
+            self.putx([0, ['Host set the Bluetooth name to ' + name]])
+            self.putx([1, ['BT name = ' + name]])
         else:
-            self.put(ss, es, self.out_ann,
-                     [ANN_ASCII, ['Host sent unsupported command: %s' % s]])
+            self.putx([0, ['Host sent unsupported command: %s' % s]])
+            self.putx([1, ['Unsupported command: %s' % s]])
         self.cmd[rxtx] = ''
 
-    def handle_device_reply(self, ss, es, rxtx, s):
+    def handle_device_reply(self, rxtx, s):
         if s == 'ROK':
-            self.put(ss, es, self.out_ann,
-                     [ANN_ASCII, ['Device initialized correctly']])
+            self.putx([0, ['Device initialized correctly']])
+            self.putx([1, ['Init']])
         elif s == 'OK':
-            self.put(ss, es, self.out_ann,
-                     [ANN_ASCII, ['Device acknowledged last command']])
+            self.putx([0, ['Device acknowledged last command']])
+            self.putx([1, ['ACK']])
         elif s.startswith('ERR'):
             error = s[s.find('=') + 1:]
-            self.put(ss, es, self.out_ann,
-                     [ANN_ASCII, ['Device sent error code ' + error]])
+            self.putx([0, ['Device sent error code ' + error]])
+            self.putx([1, ['ERR = ' + error]])
         else:
-            self.put(ss, es, self.out_ann,
-                     [ANN_ASCII, ['Device sent an unknown reply: %s' % s]])
+            self.putx([0, ['Device sent an unknown reply: %s' % s]])
+            self.putx([1, ['Unknown reply: %s' % s]])
         self.cmd[rxtx] = ''
 
     def decode(self, ss, es, data):
@@ -88,6 +93,10 @@ class Decoder(srd.Decoder):
         # For now, ignore all UART packets except the actual data packets.
         if ptype != 'DATA':
             return
+
+        # If this is the start of a command/reply, remember the start sample.
+        if self.cmd[rxtx] == '':
+            self.ss_block = ss
 
         # Append a new (ASCII) byte to the currently built/parsed command.
         self.cmd[rxtx] += chr(pdata)
@@ -99,9 +108,11 @@ class Decoder(srd.Decoder):
         # Handle host commands and device replies.
         # We remove trailing \r\n from the strings before handling them.
         if rxtx == RX:
-            self.handle_device_reply(ss, es, rxtx, self.cmd[rxtx][:-2])
+            self.es_block = es
+            self.handle_device_reply(rxtx, self.cmd[rxtx][:-2])
         elif rxtx == TX:
-            self.handle_host_command(ss, es, rxtx, self.cmd[rxtx][:-2])
+            self.es_block = es
+            self.handle_host_command(rxtx, self.cmd[rxtx][:-2])
         else:
             raise Exception('Invalid rxtx value: %d' % rxtx)
 
