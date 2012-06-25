@@ -766,25 +766,22 @@ static void receive_transfer(struct libusb_transfer *transfer)
 					 */
 					packet.type = SR_DF_LOGIC;
 					packet.payload = &logic;
-					logic.length = ctx->trigger_stage;
-					logic.unitsize = 1;
+					logic.unitsize = sizeof(*ctx->trigger_buffer);
+					logic.length = ctx->trigger_stage * logic.unitsize;
 					logic.data = ctx->trigger_buffer;
 					sr_session_send(ctx->session_dev_id, &packet);
 
 					ctx->trigger_stage = TRIGGER_FIRED;
 					break;
 				}
-				return;
-			}
-
-			/*
-			 * We had a match before, but not in the next sample. However, we may
-			 * have a match on this stage in the next bit -- trigger on 0001 will
-			 * fail on seeing 00001, so we need to go back to stage 0 -- but at
-			 * the next sample from the one that matched originally, which the
-			 * counter increment at the end of the loop takes care of.
-			 */
-			if (ctx->trigger_stage > 0) {
+			} else if (ctx->trigger_stage > 0) {
+				/*
+				 * We had a match before, but not in the next sample. However, we may
+				 * have a match on this stage in the next bit -- trigger on 0001 will
+				 * fail on seeing 00001, so we need to go back to stage 0 -- but at
+				 * the next sample from the one that matched originally, which the
+				 * counter increment at the end of the loop takes care of.
+				 */
 				i -= ctx->trigger_stage;
 				if (i < -1)
 					i = -1; /* Oops, went back past this buffer. */
