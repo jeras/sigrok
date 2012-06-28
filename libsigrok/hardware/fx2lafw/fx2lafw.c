@@ -467,8 +467,7 @@ static int hw_dev_open(int dev_index)
 	 * If the firmware was recently uploaded, wait up to MAX_RENUM_DELAY_MS
 	 * milliseconds for the FX2 to renumerate.
 	 */
-	ret = 0;
-
+	ret = SR_ERR;
 	if (ctx->fw_updated > 0) {
 		sr_info("fx2lafw: Waiting for device to reset.");
 		/* takes at least 300ms for the FX2 to be gone from the USB bus */
@@ -480,9 +479,8 @@ static int hw_dev_open(int dev_index)
 			g_usleep(100 * 1000);
 
 			timediff_us = g_get_monotonic_time() - ctx->fw_updated;
-			timediff_ms = timediff_us / G_USEC_PER_SEC;
-			sr_spew("fx2lafw: timediff: %" PRIi64 " us.",
-				timediff_us);
+			timediff_ms = timediff_us / 1000;
+			sr_spew("fx2lafw: waited %" PRIi64 " ms", timediff_ms);
 		}
 		sr_info("fx2lafw: Device came back after %d ms.", timediff_ms);
 	} else {
@@ -497,7 +495,21 @@ static int hw_dev_open(int dev_index)
 
 	ret = libusb_claim_interface(ctx->usb->devhdl, USB_INTERFACE);
 	if (ret != 0) {
-		sr_err("fx2lafw: Unable to claim interface: %d.", ret);
+		switch(ret) {
+		case LIBUSB_ERROR_BUSY:
+			sr_err("fx2lafw: Unable to claim USB interface. Another "
+				"program or driver has already claimed it.");
+			break;
+
+		case LIBUSB_ERROR_NO_DEVICE:
+			sr_err("fx2lafw: Device has been disconnected.");
+			break;
+
+		default:
+			sr_err("fx2lafw: Unable to claim interface: %d.", ret);
+			break;
+		}
+
 		return SR_ERR;
 	}
 
@@ -670,28 +682,44 @@ static void finish_acquisition(struct context *ctx)
 	free(lupfd); /* NOT g_free()! */
 }
 
+static void free_transfer(struct libusb_transfer *transfer)
+{
+	struct context *ctx = transfer->user_data;
+
+	g_free(transfer->buffer);
+	transfer->buffer = NULL;
+	libusb_free_transfer(transfer);
+
+	ctx->submitted_transfers--;
+	if (ctx->submitted_transfers == 0)
+		finish_acquisition(ctx);
+
+}
+
+static void resubmit_transfer(struct libusb_transfer *transfer)
+{
+	if (libusb_submit_transfer(transfer) != 0) {
+		free_transfer(transfer);
+		/* TODO: Stop session? */
+		/* TODO: Better error message. */
+		sr_err("fx2lafw: %s: libusb_submit_transfer error.", __func__);
+	}
+}
+
 static void receive_transfer(struct libusb_transfer *transfer)
 {
-	/* TODO: These statics have to move to the ctx struct. */
-	static int empty_transfer_count = 0;
+	gboolean packet_has_error = FALSE;
 	struct sr_datafeed_packet packet;
 	struct sr_datafeed_logic logic;
 	struct context *ctx = transfer->user_data;
 	int trigger_offset, i;
-	uint8_t *new_buf;
 
 	/*
 	 * If acquisition has already ended, just free any queued up
 	 * transfer that come in.
 	 */
 	if (ctx->num_samples == -1) {
-		if (transfer)
-			libusb_free_transfer(transfer);
-
-		ctx->submitted_transfers--;
-		if (ctx->submitted_transfers == 0)
-			finish_acquisition(ctx);
-
+		free_transfer(transfer);
 		return;
 	}
 
@@ -703,34 +731,34 @@ static void receive_transfer(struct libusb_transfer *transfer)
 	const int sample_width = ctx->sample_wide ? 2 : 1;
 	const int cur_sample_count = transfer->actual_length / sample_width;
 
-	/* Fire off a new request. */
-	if (!(new_buf = g_try_malloc(4096))) {
-		sr_err("fx2lafw: %s: new_buf malloc failed.", __func__);
-		libusb_free_transfer(transfer);
-		return; /* TODO: SR_ERR_MALLOC */
+	switch (transfer->status) {
+	case LIBUSB_TRANSFER_NO_DEVICE:
+		abort_acquisition(ctx);
+		free_transfer(transfer);
+		return;
+	case LIBUSB_TRANSFER_COMPLETED:
+	case LIBUSB_TRANSFER_TIMED_OUT: /* We may have received some data though */
+		break;
+	default:
+		packet_has_error = TRUE;
+		break;
 	}
 
-	transfer->buffer = new_buf;
-	transfer->length = 4096;
-	if (libusb_submit_transfer(transfer) != 0) {
-		/* TODO: Stop session? */
-		/* TODO: Better error message. */
-		sr_err("fx2lafw: %s: libusb_submit_transfer error.", __func__);
-	}
-
-	if (transfer->actual_length == 0) {
-		empty_transfer_count++;
-		if (empty_transfer_count > MAX_EMPTY_TRANSFERS) {
+	if (transfer->actual_length == 0 || packet_has_error) {
+		ctx->empty_transfer_count++;
+		if (ctx->empty_transfer_count > MAX_EMPTY_TRANSFERS) {
 			/*
 			 * The FX2 gave up. End the acquisition, the frontend
 			 * will work out that the samplecount is short.
 			 */
 			abort_acquisition(ctx);
+			free_transfer(transfer);
+		} else {
+			resubmit_transfer(transfer);
 		}
-		g_free(cur_buf);
 		return;
 	} else {
-		empty_transfer_count = 0;
+		ctx->empty_transfer_count = 0;
 	}
 
 	trigger_offset = 0;
@@ -812,19 +840,59 @@ static void receive_transfer(struct libusb_transfer *transfer)
 		 * ratio-sized buffer.
 		 */
 	}
-	g_free(cur_buf);
+
+	resubmit_transfer(transfer);
+}
+
+static unsigned int to_bytes_per_ms(unsigned int samplerate)
+{
+	return samplerate / 1000;
+}
+
+static size_t get_buffer_size(struct context *ctx)
+{
+	size_t s;
+
+	/* The buffer should be large enough to hold 10ms of data and a multiple
+	 * of 512. */
+	s = 10 * to_bytes_per_ms(ctx->cur_samplerate);
+	return (s + 511) & ~511;
+}
+
+static unsigned int get_number_of_transfers(struct context *ctx)
+{
+	unsigned int n;
+
+	/* Total buffer size should be able to hold about 500ms of data */
+	n = 500 * to_bytes_per_ms(ctx->cur_samplerate) / get_buffer_size(ctx);
+
+	if (n > NUM_SIMUL_TRANSFERS)
+		return NUM_SIMUL_TRANSFERS;
+
+	return n;
+}
+
+static unsigned int get_timeout(struct context *ctx)
+{
+	size_t total_size;
+	unsigned int timeout;
+
+	total_size = get_buffer_size(ctx) * get_number_of_transfers(ctx);
+	timeout = total_size / to_bytes_per_ms(ctx->cur_samplerate);
+	return timeout + timeout / 4; /* Leave a headroom of 25% percent */
 }
 
 static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 {
 	struct sr_dev_inst *sdi;
-	struct sr_datafeed_packet *packet;
-	struct sr_datafeed_header *header;
+	struct sr_datafeed_packet packet;
+	struct sr_datafeed_header header;
 	struct sr_datafeed_meta_logic meta;
 	struct context *ctx;
 	struct libusb_transfer *transfer;
 	const struct libusb_pollfd **lupfd;
-	int ret, size, i;
+	unsigned int i;
+	int ret;
 	unsigned char *buf;
 
 	if (!(sdi = sr_dev_inst_get(dev_insts, dev_index)))
@@ -832,20 +900,13 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 	ctx = sdi->priv;
 	ctx->session_dev_id = cb_data;
 	ctx->num_samples = 0;
+	ctx->empty_transfer_count = 0;
 
-	if (!(packet = g_try_malloc(sizeof(struct sr_datafeed_packet)))) {
-		sr_err("fx2lafw: %s: packet malloc failed.", __func__);
-		return SR_ERR_MALLOC;
-	}
+	const unsigned int timeout = get_timeout(ctx);
+	const unsigned int num_transfers = get_number_of_transfers(ctx);
+	const size_t size = get_buffer_size(ctx);
 
-	if (!(header = g_try_malloc(sizeof(struct sr_datafeed_header)))) {
-		sr_err("fx2lafw: %s: header malloc failed.", __func__);
-		return SR_ERR_MALLOC;
-	}
-
-	/* Start with 2K transfer, subsequently increased to 4K. */
-	size = 2048;
-	for (i = 0; i < NUM_SIMUL_TRANSFERS; i++) {
+	for (i = 0; i < num_transfers; i++) {
 		if (!(buf = g_try_malloc(size))) {
 			sr_err("fx2lafw: %s: buf malloc failed.", __func__);
 			return SR_ERR_MALLOC;
@@ -853,7 +914,7 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 		transfer = libusb_alloc_transfer(0);
 		libusb_fill_bulk_transfer(transfer, ctx->usb->devhdl,
 				2 | LIBUSB_ENDPOINT_IN, buf, size,
-				receive_transfer, ctx, 40);
+				receive_transfer, ctx, timeout);
 		if (libusb_submit_transfer(transfer) != 0) {
 			/* TODO: Free them all. */
 			libusb_free_transfer(transfer);
@@ -862,30 +923,26 @@ static int hw_dev_acquisition_start(int dev_index, void *cb_data)
 		}
 
 		ctx->submitted_transfers++;
-		size = 4096;
 	}
 
 	lupfd = libusb_get_pollfds(usb_context);
 	for (i = 0; lupfd[i]; i++)
 		sr_source_add(lupfd[i]->fd, lupfd[i]->events,
-			      40, receive_data, NULL);
+			      timeout, receive_data, NULL);
 	free(lupfd); /* NOT g_free()! */
 
-	packet->type = SR_DF_HEADER;
-	packet->payload = header;
-	header->feed_version = 1;
-	gettimeofday(&header->starttime, NULL);
-	sr_session_send(cb_data, packet);
+	packet.type = SR_DF_HEADER;
+	packet.payload = &header;
+	header.feed_version = 1;
+	gettimeofday(&header.starttime, NULL);
+	sr_session_send(cb_data, &packet);
 
 	/* Send metadata about the SR_DF_LOGIC packets to come. */
-	packet->type = SR_DF_META_LOGIC;
-	packet->payload = &meta;
+	packet.type = SR_DF_META_LOGIC;
+	packet.payload = &meta;
 	meta.samplerate = ctx->cur_samplerate;
 	meta.num_probes = ctx->sample_wide ? 16 : 8;
-	sr_session_send(cb_data, packet);
-
-	g_free(header);
-	g_free(packet);
+	sr_session_send(cb_data, &packet);
 
 	if ((ret = command_start_acquisition (ctx->usb->devhdl,
 		ctx->cur_samplerate, ctx->sample_wide)) != SR_OK) {
