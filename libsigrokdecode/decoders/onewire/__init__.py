@@ -67,7 +67,6 @@ If link layer annotations are shown, possible issues with sample rate and sample
 timing are also shown.
 
 TODO:
-- fix annotations to have event duration instead of begin end time
 - add CRC checks for network layer
 - add transport layer code
 - review link layer code, to check for protocol correctness
