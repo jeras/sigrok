@@ -28,6 +28,10 @@
 #include <QScrollBar>
 #include "channelform.h"
 
+extern "C" {
+#include <glib.h>
+}
+
 extern uint8_t *sample_buffer;
 
 namespace Ui
@@ -45,6 +49,7 @@ public:
 
 	Ui::MainWindow *ui;
 
+	GSList *getDevices(void);
 	void setCurrentLA(int la);
 	int getCurrentLA(void);
 	void setNumChannels(int ch);
@@ -65,6 +70,7 @@ public:
 	void setupDockWidgets(void);
 
 private:
+	GSList *devices;
 	int currentLA;
 	int numChannels;
 	uint64_t sampleRate;

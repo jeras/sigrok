@@ -78,6 +78,10 @@ static int logger(void *cb_data, int loglevel, const char *format, va_list args)
 MainWindow::MainWindow(QWidget *parent)
 	: QMainWindow(parent), ui(new Ui::MainWindow)
 {
+	struct sr_dev_driver **drivers;
+	int i;
+
+	devices = NULL;
 	currentLA = -1;
 	numChannels = -1;
 	configChannelTitleBarLayout = DOCK_VERTICAL; /* Vertical layout */
@@ -96,6 +100,15 @@ MainWindow::MainWindow(QWidget *parent)
 		return; /* TODO? */
 	}
 	qDebug() << "srd_log_handler_set() call successful.";
+
+	/* Initialize all libsigrok drivers. */
+	drivers = sr_driver_list();
+	for (i = 0; drivers[i]; i++) {
+		if (sr_driver_init(drivers[i]) != SR_OK) {
+			qDebug("Failed to initialize driver %s", drivers[i]->name);
+			return;
+		}
+	}
 
 	// this->setDockOptions(QMainWindow::AllowNestedDocks);
 }
@@ -168,7 +181,7 @@ void MainWindow::setupDockWidgets(void)
 	scrollWidget->setAllowedAreas(Qt::BottomDockWidgetArea);
 	horizontalScrollBar = new QScrollBar(this);
 	horizontalScrollBar->setOrientation(Qt::Horizontal);
-	
+
 	QDockWidget::DockWidgetFeatures f;
 	if (configChannelTitleBarLayout == DOCK_VERTICAL)
 		f |= QDockWidget::DockWidgetVerticalTitleBar;
@@ -176,12 +189,17 @@ void MainWindow::setupDockWidgets(void)
 	scrollWidget->setWidget(horizontalScrollBar);
 	addDockWidget(Qt::BottomDockWidgetArea, scrollWidget,
 			      Qt::Vertical);
-	
+
 	for (int i = 0; i < getNumChannels(); ++i) {
 		/* The scrollbar scrolls all channels. */
 		connect(horizontalScrollBar, SIGNAL(valueChanged(int)),
 				channelForms[i], SLOT(setScrollBarValue(int)));
 	}
+}
+
+GSList *MainWindow::getDevices(void)
+{
+	return devices;
 }
 
 void MainWindow::setCurrentLA(int la)
@@ -271,23 +289,36 @@ void MainWindow::on_actionPreferences_triggered()
 void MainWindow::on_actionScan_triggered()
 {
 	QString s;
-	GSList *devs = NULL;
-	int num_devs, pos;
-	struct sr_dev *dev;
+	GSList *l, *tmpdevs;
+	int num_devs, pos, i;
+	struct sr_dev_driver **drivers;
+	struct sr_dev_inst *sdi;
 	char *di_num_probes, *str;
 	struct sr_samplerates *samplerates;
 	const static float mult[] = { 2.f, 2.5f, 2.f };
 
 	statusBar()->showMessage(tr("Scanning for logic analyzers..."), 2000);
 
-	sr_dev_scan();
-	devs = sr_dev_list();
-	num_devs = g_slist_length(devs);
+	if (devices) {
+		/* TODO: tell drivers to clean up all instances */
+		g_free(devices);
+	}
+	devices = NULL;
+
+	/* Scan all drivers for all devices. */
+	drivers = sr_driver_list();
+	for (i = 0; drivers[i]; i++) {
+		tmpdevs = sr_driver_scan(drivers[i], NULL);
+		for (l = tmpdevs; l; l = l->next)
+			devices = g_slist_append(devices, l->data);
+		g_slist_free(tmpdevs);
+	}
+	num_devs = g_slist_length(devices);
 
 	ui->comboBoxLA->clear();
 	for (int i = 0; i < num_devs; ++i) {
-		dev = (struct sr_dev *)g_slist_nth_data(devs, i);
-		ui->comboBoxLA->addItem(dev->driver->name); /* TODO: Full name */
+		sdi = (struct sr_dev_inst *)g_slist_nth_data(devices, i);
+		ui->comboBoxLA->addItem(sdi->driver->name); /* TODO: Full name */
 	}
 
 	if (num_devs == 0) {
@@ -296,14 +327,15 @@ void MainWindow::on_actionScan_triggered()
 		return;
 	} else if (num_devs == 1) {
 		s = tr("Found supported logic analyzer: ");
-		s.append(dev->driver->name);
+		sdi = (struct sr_dev_inst *)g_slist_nth_data(devices, 0 /* opt_dev */);
+		s.append(sdi->driver->name);
 		statusBar()->showMessage(s, 2000);
 	} else {
 		/* TODO: Allow user to select one of the devices. */
 		s = tr("Found multiple logic analyzers: ");
 		for (int i = 0; i < num_devs; ++i) {
-			dev = (struct sr_dev *)g_slist_nth_data(devs, i);
-			s.append(dev->driver->name);
+			sdi = (struct sr_dev_inst *)g_slist_nth_data(devices, i);
+			s.append(sdi->driver->name);
 			if (i != num_devs - 1)
 				s.append(", ");
 		}
@@ -311,27 +343,24 @@ void MainWindow::on_actionScan_triggered()
 		// return;
 	}
 
-	dev = (struct sr_dev *)g_slist_nth_data(devs, 0 /* opt_dev */);
+	sdi = (struct sr_dev_inst *)g_slist_nth_data(devices, 0 /* opt_dev */);
 
 	setCurrentLA(0 /* TODO */);
 
-	di_num_probes = (char *)dev->driver->dev_info_get(
-			dev->driver_index, SR_DI_NUM_PROBES);
-	if (di_num_probes != NULL) {
+	if (sr_info_get(sdi->driver, SR_DI_NUM_PROBES,
+			(const void **)&di_num_probes, sdi) == SR_OK)
 		setNumChannels(GPOINTER_TO_INT(di_num_probes));
-	} else {
+	else
 		setNumChannels(8); /* FIXME: Error handling. */
-	}
 
 	ui->comboBoxLA->clear();
-	ui->comboBoxLA->addItem(dev->driver->name); /* TODO: Full name */
+	ui->comboBoxLA->addItem(sdi->driver->name); /* TODO: Full name */
 
 	s = QString(tr("Channels: %1")).arg(getNumChannels());
 	ui->labelChannels->setText(s);
 
-	samplerates = (struct sr_samplerates *)dev->driver->dev_info_get(
-		      dev->driver_index, SR_DI_SAMPLERATES);
-	if (!samplerates) {
+	if (sr_info_get(sdi->driver, SR_DI_SAMPLERATES,
+			(const void **)&samplerates, sdi) != SR_OK || !samplerates) {
 		/* TODO: Error handling. */
 	}
 
@@ -344,7 +373,7 @@ void MainWindow::on_actionScan_triggered()
 		for (int i = 0; samplerates->list[i]; ++i) {
 			str = sr_samplerate_string(samplerates->list[i]);
 			s = QString(str);
-			free(str);
+			g_free(str);
 			ui->comboBoxSampleRate->insertItem(0, s,
 				QVariant::fromValue(samplerates->list[i]));
 		}
@@ -354,7 +383,7 @@ void MainWindow::on_actionScan_triggered()
 		for (uint64_t r = samplerates->low; r <= samplerates->high; ) {
 			str = sr_samplerate_string(r);
 			s = QString(str);
-			free(str);
+			g_free(str);
 			ui->comboBoxSampleRate->insertItem(0, s,
 						QVariant::fromValue(r));
 			r *= mult[pos++];
@@ -470,7 +499,8 @@ void MainWindow::on_action_Save_as_triggered()
 	file.close();
 }
 
-void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
+void datafeed_in(const struct sr_dev_inst *sdi,
+		struct sr_datafeed_packet *packet)
 {
 	static int num_probes = 0;
 	static int logic_probelist[SR_MAX_NUM_PROBES + 1] = { 0 };
@@ -518,7 +548,7 @@ void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 		num_probes = meta_logic->num_probes;
 		num_enabled_probes = 0;
 		for (int i = 0; i < meta_logic->num_probes; ++i) {
-			probe = (struct sr_probe *)g_slist_nth_data(dev->probes, i);
+			probe = (struct sr_probe *)g_slist_nth_data(sdi->probes, i);
 			if (probe->enabled)
 				logic_probelist[num_enabled_probes++] = probe->index;
 		}
@@ -539,7 +569,7 @@ void datafeed_in(struct sr_dev *dev, struct sr_datafeed_packet *packet)
 
 		if (sample_size == -1)
 			break;
-		
+
 		/* Don't store any samples until triggered. */
 		// if (opt_wait_trigger && !triggered)
 		// 	return;
@@ -573,9 +603,8 @@ void MainWindow::on_action_Get_samples_triggered()
 {
 	uint64_t samplerate;
 	QString s;
-	GSList *devs = NULL;
 	int opt_dev;
-	struct sr_dev *dev;
+	struct sr_dev_inst *sdi;
 	QComboBox *n = ui->comboBoxNumSamples;
 
 	opt_dev = 0; /* FIXME */
@@ -605,34 +634,32 @@ void MainWindow::on_action_Get_samples_triggered()
 	sr_session_new();
 	sr_session_datafeed_callback_add(datafeed_in);
 
-	devs = sr_dev_list();
-
-	dev = (struct sr_dev *)g_slist_nth_data(devs, opt_dev);
+	sdi = (struct sr_dev_inst *)g_slist_nth_data(devices, opt_dev);
 
 	/* Set the number of samples we want to get from the device. */
-	if (dev->driver->dev_config_set(dev->driver_index,
-	    SR_HWCAP_LIMIT_SAMPLES, &limit_samples) != SR_OK) {
+	if (sdi->driver->dev_config_set(sdi, SR_HWCAP_LIMIT_SAMPLES,
+			&limit_samples) != SR_OK) {
 		qDebug("Failed to set sample limit.");
 		sr_session_destroy();
 		return;
 	}
 
-	if (sr_session_dev_add(dev) != SR_OK) {
+	if (sr_session_dev_add(sdi) != SR_OK) {
 		qDebug("Failed to use device.");
 		sr_session_destroy();
 		return;
 	}
 
 	/* Set the samplerate. */
-	if (dev->driver->dev_config_set(dev->driver_index,
-	    SR_HWCAP_SAMPLERATE, &samplerate) != SR_OK) {
+	if (sdi->driver->dev_config_set(sdi, SR_HWCAP_SAMPLERATE,
+			&samplerate) != SR_OK) {
 		qDebug("Failed to set samplerate.");
 		sr_session_destroy();
 		return;
 	};
 
-	if (dev->driver->dev_config_set(dev->driver_index,
-	    SR_HWCAP_PROBECONFIG, (char *)dev->probes) != SR_OK) {
+	if (sdi->driver->dev_config_set(sdi, SR_HWCAP_PROBECONFIG,
+			(char *)sdi->probes) != SR_OK) {
 		qDebug("Failed to configure probes.");
 		sr_session_destroy();
 		return;
@@ -668,7 +695,7 @@ void MainWindow::on_action_Get_samples_triggered()
 	}
 
 	setNumSamples(limit_samples);
-	
+
 	/* Enable the relevant labels/buttons. */
 	ui->labelSampleStart->setEnabled(true);
 	ui->labelSampleEnd->setEnabled(true);
