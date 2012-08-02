@@ -78,21 +78,22 @@ class Decoder(srd.Decoder):
     options.update(dict(('t_ovd_max_'+key, ['overdrive mode max '+timings[key][0], 0]) for key in iter(timings)))
     annotations = [
         ['Text', 'Human-readable text'],
-        ['Timing', 'Human-readable events with timings in us'],
-        ['Warnings', 'Human-readable warnings'],
+        ['Timing', 'Human-readable events with timings in us']
     ]
 
     def __init__(self, **kwargs):
         self.samplerate = 0
-        self.owr = 1
-        self.trigger = 0
+        self.owr = 1  # 1-Wire signal old value.
+        self.trg = 0  # Programmable timeout trigger.
         self.state = 'WAIT FOR FALLING EDGE'
         self.bit = 0  # Current data bit.
         self.cnt = 0  # Data bit counter.
         self.cmd = 0  # ROM command.
         self.ovd = 0  # Current overdrive status.
-        self.fall = 0  # Signal fall sample index.
-        self.rise = 0  # Signal rise sample index.
+        self.fall = 0  # Signal fall sample.
+        self.rise = 0  # Signal rise sample.
+        self.pss = 0  # Presence start sample.
+        self.pes = 0  # Presence end   sample.
 
     def start(self, metadata):
         self.out_proto = self.add(srd.OUTPUT_PROTO, 'onewire_link')
@@ -101,15 +102,14 @@ class Decoder(srd.Decoder):
         self.samplerate = metadata['samplerate']
 
         ovd = self.options['overdrive']
-        self.put(0, 0, self.out_ann, [2, ['NOTE: Sample rate is %0.0fMHz and %s mode is supported.' % (self.samplerate/1000000, samplerates[ovd][0])]])
-        if (self.samplerate < samplerates[ovd][1][0]):
-            self.put(0, 0, self.out_ann, [2, ['ERROR: Sampling rate must be above %fMHz.' % (samplerates[ovd][1][0]/1000000)]])
-        if (self.samplerate < samplerates[ovd][1][1]):
-            self.put(0, 0, self.out_ann, [2, ['WARNING: Sampling rate is suggested to be above %fMHz.' % (samplerates[ovd][1][1]/1000000)]])
+        self.put(0, 0, self.out_ann, [1, ['NOTE: Sample rate is %0.0fMHz and %s mode is supported.' % (self.samplerate/1000000, samplerates[ovd][0])]])
+        if self.samplerate < samplerates[ovd][1][0]:
+            self.put(0, 0, self.out_ann, [1, ['ERROR: Sampling rate must be above %fMHz.' % (samplerates[ovd][1][0]/1000000)]])
+        if self.samplerate < samplerates[ovd][1][1]:
+            self.put(0, 0, self.out_ann, [1, ['WARNING: Sampling rate is suggested to be above %fMHz.' % (samplerates[ovd][1][1]/1000000)]])
 
         # If options were provided use them,
         # otherwise recalculate timings into clock periods.
-        self.put(0, 0, self.out_ann, [0, ['NOTE:  Timing before.']])
         for key in iter(self.options):
             val = self.options[key]
             # Do not process overdrive, it is not a timing option.
@@ -121,11 +121,14 @@ class Decoder(srd.Decoder):
                 extremes = {'min': 0, 'max': 1}
                 ext = extremes[key[6:9]]
                 # Check if option was modified.
-                if (val == 0):
-                    timings[key[10:13]][CNT][mod][ext] = int(self.samplerate * 0.000001 * timings[key[10:13]][TMG][mod][ext]) - 1
-                else:
+                if val:
                     timings[key[10:13]][CNT][mod][ext] = val
-                self.put(0, 0, self.out_ann, [0, ['NOTE: key='+str(key)+' val='+str(val)+' tmg='+str(timings[key[10:13]][TMG][mod][ext])+' cnt='+str(timings[key[10:13]][CNT][mod][ext])]])
+                else:
+                    timings[key[10:13]][CNT][mod][ext] = int(self.samplerate * 0.000001 * timings[key[10:13]][TMG][mod][ext])
+        # TODO, remove debug code
+        for key in timings: 
+            self.put(0, 0, self.out_ann, [0, ['NOTE: '+str(timings[key])]])
+            self.put(0, 0, self.out_ann, [1, ['NOTE: '+str(timings[key])]])
 
     def report(self):
         pass
@@ -134,11 +137,11 @@ class Decoder(srd.Decoder):
         for (samplenum, (owr, pwr)) in data:
 
             # Check if the trigger sample is reached.
-            if samplenum == self.trigger:
+            if samplenum == self.trg:
 
                 # Check if recovery time is met.
-                if (self.trigger > samplenum):
-                    self.put(samplenum, self.trigger, self.out_ann, [1, ['WARNING: master timing issue, recovery time not met']])
+                if self.trg > samplenum:
+                    self.put(samplenum, self.trg, self.out_ann, [1, ['WARNING: master timing issue, recovery time not met']])
 
                 # After timeout report no presence pulse was received
                 if self.state == 'WAIT FOR PRESENCE PULSE':
@@ -160,28 +163,30 @@ class Decoder(srd.Decoder):
                     self.rise = samplenum
                     # Measure signal low time in samples and us.
                     self.low = self.rise - self.fall
-                    time = float(self.low)/self.samplerate*1000000
+                    time = float(self.low) / self.samplerate * 1000000
                     # Process pulse length.
-                    if (self.low < timings['d0l'][CNT][self.ovd][MAX]):
+                    # Check if this is a data slot.
+                    if self.low < timings['d0l'][CNT][self.ovd][MAX]:
                         # This is a data slot.
-                        if (self.low < timings['d1l'][CNT][self.ovd][MAX]):
-                            # Check if slot is too short.
-                            if (self.low < timings['d1l'][CNT][self.ovd][MIN]):
-                                self.put(self.fall, samplenum, self.out_ann, [2, ['WARNING: data 1 pulse too short']])
+                        # Check if it is 1 or 0.
+                        if self.low < timings['d1l'][CNT][self.ovd][MAX]:
                             # This a data 1 slot.
                             self.bit = 1
+                            # Check if slot is too short for data 1.
+                            if self.low < timings['d1l'][CNT][self.ovd][MIN]:
+                                self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: data 1 pulse too short']])
                             # Trigger time should is set to end of slot plus recovery time.
-                            self.trigger = self.fall + (timings['d0l'][CNT][self.ovd][MIN] +
-                                                        timings['rec'][CNT][self.ovd][MIN])
+                            self.trg = self.fall + timings['d0l'][CNT][self.ovd][MIN] + \
+                                                   timings['rec'][CNT][self.ovd][MIN] - 1
                         else:
                             # This a data 0 slot.
                             self.bit = 0
                             # Trigger time should is set to end of recovery time.
-                            self.trigger = samplenum + timings['rec'][CNT][self.ovd][MIN]
+                            self.trg = samplenum + timings['rec'][CNT][self.ovd][MIN] - 1
                         # Report received data bit
-                        self.put(self.fall, samplenum, self.out_ann, [0, ['BIT=%d' % self.bit]])
+                        self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_ann, [0, ['BIT=%d' % self.bit]])
                         self.put(self.fall, self.rise, self.out_ann, [1, ['BIT=%d (%.1fus)' % (self.bit, time)]])
-                        self.put(self.fall, samplenum, self.out_proto, ['BIT', self.bit])
+                        self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_proto, ['BIT', self.bit])
                         # Detect overdrive commands.
                         if self.cnt < 8:
                             self.cmd = self.cmd | (self.bit << self.cnt)
@@ -194,36 +199,39 @@ class Decoder(srd.Decoder):
                         # This is a data slot, another slot is expected next.
                         self.state = 'WAIT FOR FALLING EDGE'
                     else:
-                        # Check if slot is too short.
-                        if (self.low < timings['rsl'][CNT][self.ovd][MIN]):
-                            self.put(self.fall, samplenum, self.out_ann, [0, ['WARNING: reset pulse too short']])
+                        # Check if slot is too short for a reset.
+                        if self.low < timings['rsl'][CNT][self.ovd][MIN]:
+                            self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: reset pulse too short']])
                         # Check if slot is too short to be a normal reset and too long for overdrive.
-                        if ((self.low > timings['rsl'][CNT][OVD][MAX]) and
-                            (self.low < timings['rsl'][CNT][NRM][MIN])):
-                            self.put(self.fall, samplenum, self.out_ann, [2, ['WARNING: reset pulse length between normal and overdrive']])
-                        # Check if this pulse clears overdrive mode.
-                        if (self.low > timings['rsl'][CNT][NRM][MIN]):
+                        if (self.low > timings['rsl'][CNT][OVD][MAX]) and \
+                           (self.low < timings['rsl'][CNT][NRM][MIN]):
+                            self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: reset pulse length between normal and overdrive']])
+                        # Check if this reset pulse clears overdrive mode.
+                        if self.low >= timings['rsl'][CNT][NRM][MIN]:
                             self.ovd = 0
-                            if (self.ovd):
+                            if self.ovd:
                                 self.put(self.fall, samplenum, self.out_ann, [0, ['EXIT OVERDRIVE MODE']])
                         # Check if slot is too long.
                         if (self.low > timings['rsl'][CNT][NRM][MAX]):
-                            self.put(self.fall, samplenum, self.out_ann, [2, ['WARNING: reset pulse too long']])
-                        # Report reset pulse timing
+                            self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: reset pulse too long']])
+                        # Report reset pulse timing.
                         self.put(self.fall, self.rise, self.out_ann, [1, ['RESET (%.1fus)' % time]])
-                        # This is a reset slot presence pulse follows.
+                        # This is a reset slot, presence pulse follows.
                         self.state = 'WAIT FOR PRESENCE PULSE'
                         # Clear command bit counter and data register.
                         self.cnt = 0
                         self.cmd = 0
                 elif self.state == 'WAIT FOR PRESENCE PULSE':
                     # Start of the presence pulse.
-                    if (not owr):
+                    if not owr:
+                        self.pss = samplenum
                         self.state = 'WAIT FOR PRESENCE PULSE'
                     # End of the presence pulse.
-                    elif (owr):
+                    else:
+                        self.pes = samplenum
+                        time = float(self.pss - self.pes) / self.samplerate * 1000000
                         self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE=True']])
-                        self.put(self.fall, self.rise, self.out_ann, [1, ['PRESENCE (%.1fus)' % time]])
+                        self.put(self.pss, self.pes, self.out_ann, [1, ['PRESENCE (%.1fus)' % time]])
                         self.put(self.fall, samplenum, self.out_proto, ['RESET/PRESENCE', 1])
                         self.state = 'WAIT FOR FALLING EDGE'
                 else:
