@@ -84,8 +84,8 @@ class Decoder(srd.Decoder):
     def __init__(self, **kwargs):
         self.samplerate = 0
         self.owr = 1  # 1-Wire signal old value.
+        self.pwr = 0  # 1-Wire power old value.
         self.trg = 0  # Programmable timeout trigger.
-        self.state = 'WAIT FOR FALLING EDGE'
         self.bit = 0  # Current data bit.
         self.cnt = 0  # Data bit counter.
         self.cmd = 0  # ROM command.
@@ -94,6 +94,7 @@ class Decoder(srd.Decoder):
         self.rise = 0  # Signal rise sample.
         self.pss = 0  # Presence start sample.
         self.pes = 0  # Presence end   sample.
+        self.state = 'WAIT FOR FALLING EDGE'
 
     def start(self, metadata):
         self.out_proto = self.add(srd.OUTPUT_PROTO, 'onewire_link')
@@ -145,7 +146,7 @@ class Decoder(srd.Decoder):
 
                 # After timeout report no presence pulse was received
                 if self.state == 'WAIT FOR PRESENCE PULSE':
-                    self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE=False']])
+                    self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE: False']])
                     self.put(self.fall, samplenum, self.out_proto, ['RESET/PRESENCE', 0])
                     self.state = 'WAIT FOR FALLING EDGE'
 
@@ -184,8 +185,8 @@ class Decoder(srd.Decoder):
                             # Trigger time should is set to end of recovery time.
                             self.trg = samplenum + timings['rec'][CNT][self.ovd][MIN] - 1
                         # Report received data bit
-                        self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_ann, [0, ['BIT=%d' % self.bit]])
-                        self.put(self.fall, self.rise, self.out_ann, [1, ['BIT=%d (%.1fus)' % (self.bit, time)]])
+                        self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_ann, [0, ['BIT: %d' % self.bit]])
+                        self.put(self.fall, self.rise, self.out_ann, [1, ['BIT: %d (%.1fus)' % (self.bit, time)]])
                         self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_proto, ['BIT', self.bit])
                         # Detect overdrive commands.
                         if self.cnt < 8:
@@ -215,7 +216,7 @@ class Decoder(srd.Decoder):
                         if (self.low > timings['rsl'][CNT][NRM][MAX]):
                             self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: reset pulse too long']])
                         # Report reset pulse timing.
-                        self.put(self.fall, self.rise, self.out_ann, [1, ['RESET (%.1fus)' % time]])
+                        self.put(self.fall, self.rise, self.out_ann, [1, ['RESET: (%.1fus)' % time]])
                         # This is a reset slot, presence pulse follows.
                         self.state = 'WAIT FOR PRESENCE PULSE'
                         # Clear command bit counter and data register.
@@ -230,12 +231,25 @@ class Decoder(srd.Decoder):
                     else:
                         self.pes = samplenum
                         time = float(self.pss - self.pes) / self.samplerate * 1000000
-                        self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE=True']])
-                        self.put(self.pss, self.pes, self.out_ann, [1, ['PRESENCE (%.1fus)' % time]])
+                        self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE: True']])
+                        self.put(self.pss, self.pes, self.out_ann, [1, ['PRESENCE: (%.1fus)' % time]])
                         self.put(self.fall, samplenum, self.out_proto, ['RESET/PRESENCE', 1])
                         self.state = 'WAIT FOR FALLING EDGE'
                 else:
                     raise Exception('Invalid state: %s' % self.state)
 
+            # Process data only if there is a a change.
+            if self.pwr != pwr:
+
+                if pwr:
+                    self.put(samplenum, samplenum, self.out_ann, [0, ['POWER: Applied']])
+                    self.put(samplenum, samplenum, self.out_ann, [1, ['POWER: Applied']])
+                    self.put(samplenum, samplenum, self.out_proto, ['POWER', 1])
+                else:
+                    self.put(samplenum, samplenum, self.out_ann, [0, ['POWER: Removed']])
+                    self.put(samplenum, samplenum, self.out_ann, [1, ['POWER: Removed']])
+                    self.put(samplenum, samplenum, self.out_proto, ['POWER', 0])
+
             # Store the previous sample.
             self.owr = owr
+            self.pwr = pwr
