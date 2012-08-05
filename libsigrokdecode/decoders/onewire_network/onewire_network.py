@@ -51,15 +51,15 @@ class Decoder(srd.Decoder):
     ]
 
     def __init__(self, **kwargs):
-        self.beg = 0
-        self.end = 0
-        self.state = 'COMMAND'
-        self.bit_cnt = 0
-        self.search = 'P'
-        self.data_p = 0x0
-        self.data_n = 0x0
-        self.data = 0x0
-        self.rom = 0x0000000000000000
+        self.beg = 0  # Bitstream beginning.
+        self.end = 0  # Bitstream end.
+        self.cnt = 0  # Bit counter.
+        self.pol = 'P'  # Search polarity (P-positive, N-negative, D-data).
+        self.dtp = 0x0  # Search positive bits.
+        self.dtn = 0x0  # Search negative bits.
+        self.dat = 0x0  # Data stream bits.
+        self.rom = 0x0000000000000000  # Current device ROM address.
+        self.state = 'COMMAND'  # Current decoder state.
 
     def start(self, metadata):
         self.out_proto = self.add(srd.OUTPUT_PROTO, 'onewire_network')
@@ -68,11 +68,11 @@ class Decoder(srd.Decoder):
     def report(self):
         pass
 
-    def putx(self, data):
+    def puta(self, data):
         # Helper function for most annotations.
         self.put(self.beg, self.end, self.out_ann, data)
 
-    def puty(self, data):
+    def putp(self, data):
         # Helper function for most protocol packets.
         self.put(self.beg, self.end, self.out_proto, data)
 
@@ -81,75 +81,87 @@ class Decoder(srd.Decoder):
 
         # State machine.
         if code == 'RESET/PRESENCE':
-            self.search = 'P'
-            self.bit_cnt = 0
+            # If a reset is received, reset the decoder state.
+            self.pol = 'P'
+            self.cnt = 0
             self.put(ss, es, self.out_ann,
                      [0, ['Reset/presence: %s' % ('true' if val else 'false')]])
             self.put(ss, es, self.out_proto, ['RESET/PRESENCE', val])
             self.state = 'COMMAND'
             return
-
-        # For now we're only interested in 'RESET/PRESENCE' and 'BIT' packets.
-        if code != 'BIT':
+        elif code == 'POWER':
+            # If a power event is received, forward it to the next protocol layer.
+            self.put(ss, es, self.out_ann,
+                     [0, ['Power: %s' % ('applied' if val else 'removed')]])
+            self.put(ss, es, self.out_proto, ['POWER', val])
+            return
+        elif code != 'BIT':
+            # For here on we're only interested in 'BIT' events.
+            raise Exception('Invalied protocol event: \'%s\'' % code)
             return
 
         if self.state == 'COMMAND':
             # Receiving and decoding a ROM command.
-            if self.onewire_collect(8, val, ss, es) == 0:
+            if not self.onewire_collect(8, val, ss, es):
+                # Still waiting to reseive 8 bits.
                 return
-            if self.data in command:
-                self.putx([0, ['ROM command: 0x%02x \'%s\''
-                          % (self.data, command[self.data][0])]])
-                self.state = command[self.data][1]
+            if self.dat in command:
+                # If a recognized command is received,
+                # the next state is derived from the command dictionary.
+                self.puta([0, ['ROM command: 0x%02x \'%s\''
+                          % (self.dat, command[self.dat][0])]])
+                self.state = command[self.dat][1]
             else:
-                self.putx([0, ['ROM command: 0x%02x \'%s\''
-                          % (self.data, 'unrecognized')]])
+                # Else if the command is not recognized,
+                # go into an error state, where only raw bytes are printed.
+                self.puta([0, ['ROM command: 0x%02x \'%s\''
+                          % (self.dat, 'unrecognized')]])
                 self.state = 'COMMAND ERROR'
         elif self.state == 'GET ROM':
             # A 64 bit device address is selected.
             # Family code (1 byte) + serial number (6 bytes) + CRC (1 byte)
-            if self.onewire_collect(64, val, ss, es) == 0:
+            if not self.onewire_collect(64, val, ss, es):
                 return
-            self.rom = self.data & 0xffffffffffffffff
-            self.putx([0, ['ROM: 0x%016x' % self.rom]])
-            self.puty(['ROM', self.rom])
+            self.rom = self.dat & 0xffffffffffffffff
+            self.puta([0, ['ROM: 0x%016x' % self.rom]])
+            self.putp(['ROM', self.rom])
             self.state = 'TRANSPORT'
         elif self.state == 'SEARCH ROM':
             # A 64 bit device address is searched for.
             # Family code (1 byte) + serial number (6 bytes) + CRC (1 byte)
-            if self.onewire_search(64, val, ss, es) == 0:
+            if not self.onewire_search(64, val, ss, es):
                 return
-            self.rom = self.data & 0xffffffffffffffff
-            self.putx([0, ['ROM: 0x%016x' % self.rom]])
-            self.puty(['ROM', self.rom])
+            self.rom = self.dat & 0xffffffffffffffff
+            self.puta([0, ['ROM: 0x%016x' % self.rom]])
+            self.putp(['ROM', self.rom])
             self.state = 'TRANSPORT'
         elif self.state == 'TRANSPORT':
             # The transport layer is handled in byte sized units.
-            if self.onewire_collect(8, val, ss, es) == 0:
+            if not self.onewire_collect(8, val, ss, es):
                 return
-            self.putx([0, ['Data: 0x%02x' % self.data]])
-            self.puty(['DATA', self.data])
+            self.puta([0, ['Data: 0x%02x' % self.dat]])
+            self.putp(['DATA', self.dat])
         elif self.state == 'COMMAND ERROR':
             # Since the command is not recognized, print raw data.
-            if self.onewire_collect(8, val, ss, es) == 0:
+            if not self.onewire_collect(8, val, ss, es):
                 return
-            self.putx([0, ['ROM error data: 0x%02x' % self.data]])
+            self.puta([0, ['ROM error data: 0x%02x' % self.dat]])
         else:
             raise Exception('Invalid state: %s' % self.state)
 
     # Data collector.
     def onewire_collect(self, length, val, ss, es):
         # Storing the sample this sequence begins with.
-        if self.bit_cnt == 1:
+        if self.cnt == 1:
             self.beg = ss
-        self.data = self.data & ~(1 << self.bit_cnt) | (val << self.bit_cnt)
-        self.bit_cnt += 1
+        self.dat = self.dat & ~(1 << self.cnt) | (val << self.cnt)
+        self.cnt += 1
         # Storing the sample this sequence ends with.
         # In case the full length of the sequence is received, return 1.
-        if self.bit_cnt == length:
+        if self.cnt == length:
             self.end = es
-            self.data = self.data & ((1 << length) - 1)
-            self.bit_cnt = 0
+            self.dat = self.dat & ((1 << length) - 1)
+            self.cnt = 0
             return 1
         else:
             return 0
@@ -157,34 +169,32 @@ class Decoder(srd.Decoder):
     # Search collector.
     def onewire_search(self, length, val, ss, es):
         # Storing the sample this sequence begins with.
-        if (self.bit_cnt == 0) and (self.search == 'P'):
+        if (self.cnt == 0) and (self.pol == 'P'):
             self.beg = ss
 
-        if self.search == 'P':
+        if self.pol == 'P':
             # Master receives an original address bit.
-            self.data_p = self.data_p & ~(1 << self.bit_cnt) | \
-                          (val << self.bit_cnt)
-            self.search = 'N'
-        elif self.search == 'N':
+            self.dtp = self.dtp & ~(1 << self.cnt) | (val << self.cnt)
+            self.pol = 'N'
+        elif self.pol == 'N':
             # Master receives a complemented address bit.
-            self.data_n = self.data_n & ~(1 << self.bit_cnt) | \
-                          (val << self.bit_cnt)
-            self.search = 'D'
-        elif self.search == 'D':
+            self.dtn = self.dtn & ~(1 << self.cnt) | (val << self.cnt)
+            self.pol = 'D'
+        elif self.pol == 'D':
             # Master transmits an address bit.
-            self.data = self.data & ~(1 << self.bit_cnt) | (val << self.bit_cnt)
-            self.search = 'P'
-            self.bit_cnt += 1
+            self.dat = self.dat & ~(1 << self.cnt) | (val << self.cnt)
+            self.pol = 'P'
+            self.cnt += 1
 
         # Storing the sample this sequence ends with.
         # In case the full length of the sequence is received, return 1.
-        if self.bit_cnt == length:
+        if self.cnt == length:
             self.end = es
-            self.data_p = self.data_p & ((1 << length) - 1)
-            self.data_n = self.data_n & ((1 << length) - 1)
-            self.data = self.data & ((1 << length) - 1)
-            self.search = 'P'
-            self.bit_cnt = 0
+            self.dtp = self.dtp & ((1 << length) - 1)
+            self.dtn = self.dtn & ((1 << length) - 1)
+            self.dat = self.dat & ((1 << length) - 1)
+            self.pol = 'P'
+            self.cnt = 0
             return 1
         else:
             return 0
