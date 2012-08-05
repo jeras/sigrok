@@ -31,30 +31,50 @@ is layered:
 
 Network layer:
 
+Options:
+The only optuin can be used to configure the default 64bit device ROM in case
+a'Skip ROM' command is issued by the master. In case a different device is
+accessed it overrides the provided ROM option.
+
+ - rom (0x0000000000000000 by defaullt)
+
 Protocol output format:
-TODO.
+Protocol outputs are pairs [event, value]. The next event strings are
+available, the value is an integer:
+
+ - 'RESET/PRESENCE' (the value is 1 if a presence pulse was received)
+ - 'ROM' (the value is a 64bit ROM for the currently selected device)
+ - 'DATA' (the value is a 8bit byte transport layer transfer)
+ - 'POWER' (power state changes, forwarded from the link layer)
 
 Annotations:
+Only one annotation option is available:
 
-The following link layer annotations are shown:
+ - 'Text' (provides protocol events as short human readable text)
 
- - RESET/PRESENCE True/False
-   The event is marked from the signal negative edge to the end of the reset
-   high period. It is also reported if there are any devices attached to the
-   bus.
+Network layer 'Text' annotations show the following events:
 
-The following network layer annotations are shown:
-
- - ROM command <val> <name>
-   The requested ROM command is displayed as an 8bit hex value and by name.
- - ROM <val>
-   The 64bit value of the addressed device is displayed:
-   Family code (1 byte) + serial number (6 bytes) + CRC (1 byte)
- - Data <val>
-   Data intended for the transport layer is displayed as an 8bit hex value.
+ - Reset/presence: <true/false>
+   The event is marked from the signal falling edge to the end of the presence
+   pulse or the window in which such a pulse is expected. It's also reported
+   if there are any devices attached to the bus.
+ - ROM command: <val> <name>
+   The requested ROM command is reported as an 8bit hex value and by name.
+ - ROM: <64bit value>
+   The event is marked from the first to the last ROM bit. For now the
+   conflicts from the search algorithm are not shown, only the selected ROM.
+ - Data: <8bit value>
+   8bit hex raw data bytes for the transport layer are reported.
+ - CRC check: <8bit value> <match/error>
+   The status of the 8bit CRC check for the 64bit ROM is reported.
+ - ROM error data: <8bit value>
+   8bit hex raw data bytes in case the ROM command is not recognized.
+ - Power: <applied/removed>
+   Every change to the power state is reported.
 
 TODO:
- - Add CRC checks, to see if there were communication errors on the wire.
+ - Add proper support for 'Skip ROM' command, currently does not fit well
+   into the transport layer.
  - Add reporting original/complement address values from the search algorithm.
 '''
 

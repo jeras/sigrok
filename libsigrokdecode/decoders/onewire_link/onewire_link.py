@@ -145,7 +145,7 @@ class Decoder(srd.Decoder):
 
                 # After timeout report no presence pulse was received.
                 if self.state == 'WAIT FOR PRESENCE PULSE':
-                    self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE: False']])
+                    self.put(self.fall, samplenum, self.out_ann, [0, ['Reset/presence: false']])
                     self.put(self.fall, samplenum, self.out_proto, ['RESET/PRESENCE', 0])
                     self.state = 'WAIT FOR FALLING EDGE'
 
@@ -184,8 +184,8 @@ class Decoder(srd.Decoder):
                             # Trigger time is set to end of recovery time.
                             self.trg = samplenum + timings['rec'][CNT][self.ovd][MIN] - 1
                         # Report received data bit.
-                        self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_ann, [0, ['BIT: %d' % self.bit]])
-                        self.put(self.fall, self.rise, self.out_ann, [1, ['BIT: %d (%.1fus)' % (self.bit, time)]])
+                        self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_ann, [0, ['Bit: %d' % self.bit]])
+                        self.put(self.fall, self.rise, self.out_ann, [1, ['Bit: %d (%.1fus)' % (self.bit, time)]])
                         self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_proto, ['BIT', self.bit])
                         # Detect overdrive commands.
                         if self.cnt < 8:
@@ -193,7 +193,7 @@ class Decoder(srd.Decoder):
                         elif self.cnt == 8:
                             if self.cmd in [0x3c, 0x69]:
                                 self.ovd = 1
-                                self.put(self.fall, 0, self.out_ann, [0, ['ENTER OVERDRIVE MODE']])
+                                self.put(self.fall, 0, self.out_ann, [0, ['Enter overdrive mode']])
                         # Incrementing bit counter.
                         self.cnt += 1
                         # This is a data slot, another slot is expected next.
@@ -210,7 +210,7 @@ class Decoder(srd.Decoder):
                         if self.low >= timings['rsl'][CNT][NRM][MIN]:
                             self.ovd = 0
                             if self.ovd:
-                                self.put(self.fall, samplenum, self.out_ann, [0, ['EXIT OVERDRIVE MODE']])
+                                self.put(self.fall, samplenum, self.out_ann, [0, ['Exit overdrive mode']])
                         # Check if slot is too long.
                         if (self.low > timings['rsl'][CNT][NRM][MAX]):
                             self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: reset pulse too long']])
@@ -218,7 +218,7 @@ class Decoder(srd.Decoder):
                         self.trg = samplenum + timings['pdh'][CNT][self.ovd][MAX] + \
                                                timings['pdl'][CNT][self.ovd][MAX] - 1
                         # Report reset pulse timing.
-                        self.put(self.fall, self.rise, self.out_ann, [1, ['RESET: (%.1fus)' % time]])
+                        self.put(self.fall, self.rise, self.out_ann, [1, ['Reset: (%.1fus)' % time]])
                         # This is a reset slot, presence pulse follows.
                         self.state = 'WAIT FOR PRESENCE PULSE'
                         # Clear command bit counter and data register.
@@ -233,8 +233,8 @@ class Decoder(srd.Decoder):
                     else:
                         self.pes = samplenum
                         time = float(self.pes - self.pss) / self.samplerate * 1000000
-                        self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE: True']])
-                        self.put(self.pss, self.pes, self.out_ann, [1, ['PRESENCE: (%.1fus)' % time]])
+                        self.put(self.fall, samplenum, self.out_ann, [0, ['Reset/presence: True']])
+                        self.put(self.pss, self.pes, self.out_ann, [1, ['Presence: (%.1fus)' % time]])
                         self.put(self.fall, samplenum, self.out_proto, ['RESET/PRESENCE', 1])
                         self.state = 'WAIT FOR FALLING EDGE'
                 else:

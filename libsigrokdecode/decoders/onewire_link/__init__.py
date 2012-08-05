@@ -78,14 +78,14 @@ Two annotation options are available:
 
 Link layer 'Text' annotations show the following events:
 
- - RESET/PRESENCE: True/False
+ - Reset/presence: <true/false>
    The event is marked from the signal falling edge to the end of the presence
    pulse or the window in which such a pulse is expected. It's also reported
    if there are any devices attached to the bus.
- - BIT: 0/1
+ - Bit: <1bit data>
    The event is marked from the signal negative edge to the end of the data
    slot. The value of each received bit is also provided.
- - POWER: Applied/Removed
+ - Power: <applied/removed>
    Every change to the power state is reported.
 
 TODO:

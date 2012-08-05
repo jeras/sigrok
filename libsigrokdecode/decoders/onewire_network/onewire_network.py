@@ -45,14 +45,16 @@ class Decoder(srd.Decoder):
     outputs = ['onewire_network']
     probes = []
     optional_probes = []
-    options = {}
+    options = {
+        'rom': ['Skip ROM default', 0x0000000000000000]
+    }
     annotations = [
         ['Text', 'Human-readable text'],
     ]
 
     def __init__(self, **kwargs):
-        self.beg = 0  # Bitstream beginning.
-        self.end = 0  # Bitstream end.
+        self.beg = 0  # Bit stream beginning.
+        self.end = 0  # Bit stream end.
         self.cnt = 0  # Bit counter.
         self.pol = 'P'  # Search polarity (P-positive, N-negative, D-data).
         self.dtp = 0x0  # Search positive bits.
@@ -65,6 +67,8 @@ class Decoder(srd.Decoder):
     def start(self, metadata):
         self.out_proto = self.add(srd.OUTPUT_PROTO, 'onewire_network')
         self.out_ann = self.add(srd.OUTPUT_ANN, 'onewire_network')
+
+        self.rom = self.options['rom']
 
     def report(self):
         pass
@@ -99,13 +103,13 @@ class Decoder(srd.Decoder):
             return
         elif code != 'BIT':
             # For here on we're only interested in 'BIT' events.
-            raise Exception('Invalied protocol event: \'%s\'' % code)
+            raise Exception('Invalid protocol event: \'%s\'' % code)
             return
 
         if self.state == 'COMMAND':
             # Receiving and decoding a ROM command.
             if not self.onewire_collect(8, val, ss, es):
-                # Still waiting to reseive 8 bits.
+                # Still waiting to receive 8 bits.
                 return
             if self.dat in command:
                 # If a recognized command is received,
@@ -133,7 +137,7 @@ class Decoder(srd.Decoder):
             if not self.crc:
                 self.puta([0, ['CRC: 0x%02x match' % self.crc]])
             else:
-                self.puta([0, ['CRC: 0x%02x fail' % self.crc]])
+                self.puta([0, ['CRC: 0x%02x error' % self.crc]])
             # Next comes transport layer data.
             self.state = 'TRANSPORT'
         elif self.state == 'SEARCH ROM':
@@ -148,7 +152,7 @@ class Decoder(srd.Decoder):
             if not self.crc:
                 self.puta([0, ['CRC check: 0x%02x match' % self.crc]])
             else:
-                self.puta([0, ['CRC check: 0x%02x fail' % self.crc]])
+                self.puta([0, ['CRC check: 0x%02x error' % self.crc]])
             # Next comes transport layer data.
             self.state = 'TRANSPORT'
         elif self.state == 'TRANSPORT':
