@@ -22,20 +22,20 @@
 
 import sigrokdecode as srd
 
-# minimum and suggested sample rates
+# List of minimum and suggested sample rates.
 samplerates = [
 #                 minimum, suggested
     ['normal'   , [ 400000, 1000000]],  # normal    mode
     ['overdrive', [2000000, 5000000]]   # overdrive mode
 ]
 
-# 1-Wire protocol timing as defined by the standard, in micro seconds
+# 1-Wire protocol timing as defined by the standard (micro seconds).
 timings = {
 #          [                      [time in micro seconds  ], [time in clock periods  ]] ]
 #          [                      [[ normal ], [overdrive]]  [[ normal ], [overdrive]]] ]
 #    name: ['description'       , [[min, max], [ min, max]], [[min, max], [ min, max]]] ]
     'rsl': ['reset low time'    , [[480, 640], [  48,  80]], [[  0,   0], [   0,   0,]] ],
-    'rsh': ['reset high time'   , [[480,   0], [  48,   0]], [[  0,   0], [   0,   0,]] ],
+#   'rsh': ['reset high time'   , [[480,   0], [  48,   0]], [[  0,   0], [   0,   0,]] ],  # unused
     'pdh': ['presence high time', [[ 15,  60], [   2,   6]], [[  0,   0], [   0,   0,]] ],
     'pdl': ['presence low time' , [[ 60, 240], [   8,  24]], [[  0,   0], [   0,   0,]] ],
     'd0l': ['data 0 low time'   , [[ 60, 120], [   6,  16]], [[  0,   0], [   0,   0,]] ],
@@ -43,15 +43,15 @@ timings = {
     'rec': ['recovery time'     , [[  5,   0], [   2,   0]], [[  0,   0], [   0,   0,]] ]
 }
 
-# extreme constants
+# Extreme constants.
 MIN = 0  # minimum
 MAX = 1  # maximum
-# mode constants
+# Mode constants.
 NRM = 0  # normal
 OVD = 1  # overdrive
-# column selection constants
-DSC = 0  # desctiption
-TMG = 1  # time in micto seconds
+# Column selection constants.
+DSC = 0  # description
+TMG = 1  # time in micro seconds
 CNT = 2  # counter in clock periods
 
 class Decoder(srd.Decoder):
@@ -72,10 +72,10 @@ class Decoder(srd.Decoder):
     options = {
         'overdrive': ['Overdrive', 1]
     }
-    options.update(dict(('t_nrm_min_'+key, ['normal mode min '   +timings[key][0], 0]) for key in iter(timings)))
-    options.update(dict(('t_nrm_max_'+key, ['normal mode max '   +timings[key][0], 0]) for key in iter(timings)))
-    options.update(dict(('t_ovd_min_'+key, ['overdrive mode min '+timings[key][0], 0]) for key in iter(timings)))
-    options.update(dict(('t_ovd_max_'+key, ['overdrive mode max '+timings[key][0], 0]) for key in iter(timings)))
+    options.update(dict(('t_nrm_min_'+key, ['normal mode minimum '   +timings[key][DSC], 0]) for key in iter(timings)))
+    options.update(dict(('t_nrm_max_'+key, ['normal mode maximum '   +timings[key][DSC], 0]) for key in iter(timings)))
+    options.update(dict(('t_ovd_min_'+key, ['overdrive mode minimum '+timings[key][DSC], 0]) for key in iter(timings)))
+    options.update(dict(('t_ovd_max_'+key, ['overdrive mode maximum '+timings[key][DSC], 0]) for key in iter(timings)))
     annotations = [
         ['Text', 'Human-readable text'],
         ['Timing', 'Human-readable events with timings in us']
@@ -93,7 +93,7 @@ class Decoder(srd.Decoder):
         self.fall = 0  # Signal fall sample.
         self.rise = 0  # Signal rise sample.
         self.pss = 0  # Presence start sample.
-        self.pes = 0  # Presence end   sample.
+        self.pes = 0  # Presence end sample.
         self.state = 'WAIT FOR FALLING EDGE'
 
     def start(self, metadata):
@@ -116,19 +116,18 @@ class Decoder(srd.Decoder):
             # Do not process overdrive, it is not a timing option.
             if not (key == 'overdrive'):
                 # Decode mode.
-                modes = {'nrm': 0, 'ovd': 1}
+                modes = {'nrm': NRM, 'ovd': OVD}
                 mod = modes[key[2:5]]
                 # Decode extreme.
-                extremes = {'min': 0, 'max': 1}
+                extremes = {'min': MIN, 'max': MAX}
                 ext = extremes[key[6:9]]
                 # Check if option was modified.
                 if val:
                     timings[key[10:13]][CNT][mod][ext] = val
                 else:
                     timings[key[10:13]][CNT][mod][ext] = int(self.samplerate * 0.000001 * timings[key[10:13]][TMG][mod][ext])
-        # TODO, remove debug code
+        # Print out all calculated timing options.
         for key in timings: 
-            self.put(0, 0, self.out_ann, [0, ['NOTE: '+str(timings[key])]])
             self.put(0, 0, self.out_ann, [1, ['NOTE: '+str(timings[key])]])
 
     def report(self):
@@ -142,15 +141,15 @@ class Decoder(srd.Decoder):
 
                 # Check if recovery time is met.
                 if self.trg > samplenum:
-                    self.put(samplenum, self.trg, self.out_ann, [1, ['WARNING: master timing issue, recovery time not met']])
+                    self.put(self_rise, samplenum, self.out_ann, [1, ['WARNING: master timing issue, recovery time not met']])
 
-                # After timeout report no presence pulse was received
+                # After timeout report no presence pulse was received.
                 if self.state == 'WAIT FOR PRESENCE PULSE':
                     self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE: False']])
                     self.put(self.fall, samplenum, self.out_proto, ['RESET/PRESENCE', 0])
                     self.state = 'WAIT FOR FALLING EDGE'
 
-            # Process data only if there is a a change.
+            # Process data only if there is a signal change.
             if self.owr != owr:
 
                 # State machine.
@@ -162,7 +161,7 @@ class Decoder(srd.Decoder):
                 elif self.state == 'WAIT FOR RISING EDGE':
                     # Save the sample number for the rising edge.
                     self.rise = samplenum
-                    # Measure signal low time in samples and us.
+                    # Measure signal low time in samples and micro seconds.
                     self.low = self.rise - self.fall
                     time = float(self.low) / self.samplerate * 1000000
                     # Process pulse length.
@@ -176,15 +175,15 @@ class Decoder(srd.Decoder):
                             # Check if slot is too short for data 1.
                             if self.low < timings['d1l'][CNT][self.ovd][MIN]:
                                 self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: data 1 pulse too short']])
-                            # Trigger time should is set to end of slot plus recovery time.
+                            # Trigger time is set to end of slot plus recovery time.
                             self.trg = self.fall + timings['d0l'][CNT][self.ovd][MIN] + \
                                                    timings['rec'][CNT][self.ovd][MIN] - 1
                         else:
                             # This a data 0 slot.
                             self.bit = 0
-                            # Trigger time should is set to end of recovery time.
+                            # Trigger time is set to end of recovery time.
                             self.trg = samplenum + timings['rec'][CNT][self.ovd][MIN] - 1
-                        # Report received data bit
+                        # Report received data bit.
                         self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_ann, [0, ['BIT: %d' % self.bit]])
                         self.put(self.fall, self.rise, self.out_ann, [1, ['BIT: %d (%.1fus)' % (self.bit, time)]])
                         self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_proto, ['BIT', self.bit])
@@ -215,6 +214,9 @@ class Decoder(srd.Decoder):
                         # Check if slot is too long.
                         if (self.low > timings['rsl'][CNT][NRM][MAX]):
                             self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: reset pulse too long']])
+                        # Trigger time is set to the end of the slowest presence pulse.
+                        self.trg = samplenum + timings['pdh'][CNT][self.ovd][MAX] + \
+                                               timings['pdl'][CNT][self.ovd][MAX] - 1
                         # Report reset pulse timing.
                         self.put(self.fall, self.rise, self.out_ann, [1, ['RESET: (%.1fus)' % time]])
                         # This is a reset slot, presence pulse follows.
@@ -230,7 +232,7 @@ class Decoder(srd.Decoder):
                     # End of the presence pulse.
                     else:
                         self.pes = samplenum
-                        time = float(self.pss - self.pes) / self.samplerate * 1000000
+                        time = float(self.pes - self.pss) / self.samplerate * 1000000
                         self.put(self.fall, samplenum, self.out_ann, [0, ['RESET/PRESENCE: True']])
                         self.put(self.pss, self.pes, self.out_ann, [1, ['PRESENCE: (%.1fus)' % time]])
                         self.put(self.fall, samplenum, self.out_proto, ['RESET/PRESENCE', 1])
@@ -238,7 +240,7 @@ class Decoder(srd.Decoder):
                 else:
                     raise Exception('Invalid state: %s' % self.state)
 
-            # Process data only if there is a a change.
+            # Process power data only if there is a power change.
             if self.pwr != pwr:
 
                 if pwr:
