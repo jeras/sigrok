@@ -58,6 +58,7 @@ class Decoder(srd.Decoder):
         self.dtp = 0x0  # Search positive bits.
         self.dtn = 0x0  # Search negative bits.
         self.dat = 0x0  # Data stream bits.
+        self.crc = 0x00  # CRC 8bit LSFR.
         self.rom = 0x0000000000000000  # Current device ROM address.
         self.state = 'COMMAND'  # Current decoder state.
 
@@ -84,6 +85,7 @@ class Decoder(srd.Decoder):
             # If a reset is received, reset the decoder state.
             self.pol = 'P'
             self.cnt = 0
+            self.crc = 0x00
             self.put(ss, es, self.out_ann,
                      [0, ['Reset/presence: %s' % ('true' if val else 'false')]])
             self.put(ss, es, self.out_proto, ['RESET/PRESENCE', val])
@@ -117,6 +119,8 @@ class Decoder(srd.Decoder):
                 self.puta([0, ['ROM command: 0x%02x \'%s\''
                           % (self.dat, 'unrecognized')]])
                 self.state = 'COMMAND ERROR'
+            # Clear CRC register.
+            self.crc = 0
         elif self.state == 'GET ROM':
             # A 64 bit device address is selected.
             # Family code (1 byte) + serial number (6 bytes) + CRC (1 byte)
@@ -125,6 +129,12 @@ class Decoder(srd.Decoder):
             self.rom = self.dat & 0xffffffffffffffff
             self.puta([0, ['ROM: 0x%016x' % self.rom]])
             self.putp(['ROM', self.rom])
+            # Check CRC state.
+            if not self.crc:
+                self.puta([0, ['CRC: 0x%02x match' % self.crc]])
+            else:
+                self.puta([0, ['CRC: 0x%02x fail' % self.crc]])
+            # Next comes transport layer data.
             self.state = 'TRANSPORT'
         elif self.state == 'SEARCH ROM':
             # A 64 bit device address is searched for.
@@ -134,6 +144,12 @@ class Decoder(srd.Decoder):
             self.rom = self.dat & 0xffffffffffffffff
             self.puta([0, ['ROM: 0x%016x' % self.rom]])
             self.putp(['ROM', self.rom])
+            # Check CRC state.
+            if not self.crc:
+                self.puta([0, ['CRC check: 0x%02x match' % self.crc]])
+            else:
+                self.puta([0, ['CRC check: 0x%02x fail' % self.crc]])
+            # Next comes transport layer data.
             self.state = 'TRANSPORT'
         elif self.state == 'TRANSPORT':
             # The transport layer is handled in byte sized units.
@@ -155,7 +171,11 @@ class Decoder(srd.Decoder):
         if self.cnt == 1:
             self.beg = ss
         self.dat = self.dat & ~(1 << self.cnt) | (val << self.cnt)
+        # Calculate new CRC value.
+        self.onewire_crc8(val)
+        # Increment bit counter.
         self.cnt += 1
+
         # Storing the sample this sequence ends with.
         # In case the full length of the sequence is received, return 1.
         if self.cnt == length:
@@ -184,6 +204,9 @@ class Decoder(srd.Decoder):
             # Master transmits an address bit.
             self.dat = self.dat & ~(1 << self.cnt) | (val << self.cnt)
             self.pol = 'P'
+            # Calculate new CRC value.
+            self.onewire_crc8(val)
+            # Increment bit counter.
             self.cnt += 1
 
         # Storing the sample this sequence ends with.
@@ -198,3 +221,13 @@ class Decoder(srd.Decoder):
             return 1
         else:
             return 0
+
+    # CRC 8 bit LSFR.
+    def onewire_crc8(self, val):
+        # XOR operation.
+        val = (self.crc >> 7) ^ val
+        self.crc = self.crc ^ (0x98 if val else 0x00)
+        # Shift.
+        self.crc = (self.crc << 1) & 0xff | val
+        # Return new CRC LFSR state.
+        return self.crc
