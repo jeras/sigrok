@@ -187,15 +187,17 @@ class Decoder(srd.Decoder):
                         self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_ann, [0, ['Bit: %d' % self.bit]])
                         self.put(self.fall, self.rise, self.out_ann, [1, ['Bit: %d (%.1fus)' % (self.bit, time)]])
                         self.put(self.fall, self.fall + timings['d0l'][CNT][self.ovd][MIN], self.out_proto, ['BIT', self.bit])
-                        # Detect overdrive commands.
+                        # Construct ROM command for overdrive mode checking.
                         if self.cnt < 8:
                             self.cmd = self.cmd | (self.bit << self.cnt)
-                        elif self.cnt == 8:
+                        # Incrementing bit counter.
+                        self.cnt += 1
+                        # Detect overdrive commands.
+                        if self.cnt == 8:
                             if self.cmd in [0x3c, 0x69]:
                                 self.ovd = 1
                                 self.put(self.fall, 0, self.out_ann, [0, ['Enter overdrive mode']])
-                        # Incrementing bit counter.
-                        self.cnt += 1
+                                self.put(self.fall, 0, self.out_ann, [1, ['Enter overdrive mode']])
                         # This is a data slot, another slot is expected next.
                         self.state = 'WAIT FOR FALLING EDGE'
                     else:
@@ -211,6 +213,7 @@ class Decoder(srd.Decoder):
                             self.ovd = 0
                             if self.ovd:
                                 self.put(self.fall, samplenum, self.out_ann, [0, ['Exit overdrive mode']])
+                                self.put(self.fall, samplenum, self.out_ann, [1, ['Exit overdrive mode']])
                         # Check if slot is too long.
                         if (self.low > timings['rsl'][CNT][NRM][MAX]):
                             self.put(self.fall, samplenum, self.out_ann, [1, ['WARNING: reset pulse too long']])
