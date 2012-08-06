@@ -659,13 +659,6 @@ void MainWindow::on_action_Get_samples_triggered()
 		return;
 	};
 
-	if (sdi->driver->dev_config_set(sdi, SR_HWCAP_PROBECONFIG,
-			(char *)sdi->probes) != SR_OK) {
-		qDebug("Failed to configure probes.");
-		sr_session_destroy();
-		return;
-	}
-
 	if (sr_session_start() != SR_OK) {
 		qDebug("Failed to start session.");
 		sr_session_destroy();
