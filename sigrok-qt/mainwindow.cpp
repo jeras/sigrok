@@ -503,7 +503,7 @@ void datafeed_in(const struct sr_dev_inst *sdi,
 		struct sr_datafeed_packet *packet)
 {
 	static int num_probes = 0;
-	static int logic_probelist[SR_MAX_NUM_PROBES + 1] = { 0 };
+	static int logic_probelist[SR_MAX_NUM_PROBES + 1] = { -1 };
 	static uint64_t received_samples = 0;
 	static int triggered = 0;
 	static int unitsize = 0;
@@ -552,6 +552,7 @@ void datafeed_in(const struct sr_dev_inst *sdi,
 			if (probe->enabled)
 				logic_probelist[num_enabled_probes++] = probe->index;
 		}
+		logic_probelist[num_enabled_probes] = -1;
 
 		qDebug() << "Acquisition with" << num_enabled_probes << "/"
 			 << num_probes << "probes at"
