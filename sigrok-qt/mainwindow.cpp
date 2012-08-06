@@ -534,7 +534,6 @@ void datafeed_in(const struct sr_dev_inst *sdi,
 	case SR_DF_END:
 		qDebug("SR_DF_END");
 		/* TODO: o */
-		sr_session_stop();
 		// progress->setValue(received_samples); /* FIXME */
 		break;
 	case SR_DF_TRIGGER:
