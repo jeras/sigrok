@@ -637,7 +637,7 @@ void MainWindow::on_action_Get_samples_triggered()
 	sdi = (struct sr_dev_inst *)g_slist_nth_data(devices, opt_dev);
 
 	/* Set the number of samples we want to get from the device. */
-	if (sdi->driver->dev_config_set(sdi, SR_HWCAP_LIMIT_SAMPLES,
+	if (sr_dev_config_set(sdi, SR_HWCAP_LIMIT_SAMPLES,
 			&limit_samples) != SR_OK) {
 		qDebug("Failed to set sample limit.");
 		sr_session_destroy();
@@ -651,8 +651,7 @@ void MainWindow::on_action_Get_samples_triggered()
 	}
 
 	/* Set the samplerate. */
-	if (sdi->driver->dev_config_set(sdi, SR_HWCAP_SAMPLERATE,
-			&samplerate) != SR_OK) {
+	if (sr_dev_config_set(sdi, SR_HWCAP_SAMPLERATE, &samplerate) != SR_OK) {
 		qDebug("Failed to set samplerate.");
 		sr_session_destroy();
 		return;
