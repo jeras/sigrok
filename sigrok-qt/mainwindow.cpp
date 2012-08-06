@@ -669,8 +669,6 @@ void MainWindow::on_action_Get_samples_triggered()
 	progress->setMinimumDuration(100);
 
 	sr_session_run();
-
-	sr_session_stop();
 	sr_session_destroy();
 
 	for (int i = 0; i < getNumChannels(); ++i) {
